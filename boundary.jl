@@ -1,4 +1,4 @@
-function fill_x(Q, U, rankx, ranky, inlet)
+function fill_x(Q, U, rankx, ranky)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -6,38 +6,30 @@ function fill_x(Q, U, rankx, ranky, inlet)
     if i > Nxp+2*NG || j > Nyp+2*NG || k > Nzp+2*NG
         return
     end
-    # inlet
-    if rankx == 0 && i <= NG+1 && j >= NG+1 && j <= Nyp+NG
-        T_ref = 107.1f0
-        u_ref = 609.1f0
-        ρ_ref = 0.077f0
 
-        ρ = inlet[j-NG+ranky*Nyp, 1] * ρ_ref
-        u = inlet[j-NG+ranky*Nyp, 2] * u_ref
-        v = inlet[j-NG+ranky*Nyp, 3] * u_ref
-        T = inlet[j-NG+ranky*Nyp, 4] * T_ref
-        p = ρ * Rg * T
-
-        @inbounds Q[i, j, k, 1] = ρ
-        @inbounds Q[i, j, k, 2] = u
-        @inbounds Q[i, j, k, 3] = v
-        @inbounds Q[i, j, k, 4] = 0
-        @inbounds Q[i, j, k, 6] = T
-        @inbounds Q[i, j, k, 5] = p
-
-        @inbounds U[i, j, k, 1] = ρ
-        @inbounds U[i, j, k, 2] = ρ * u
-        @inbounds U[i, j, k, 3] = ρ * v
-        @inbounds U[i, j, k, 4] = 0
-        @inbounds U[i, j, k, 5] = p/(γ-1) + 0.5f0*ρ*(u^2+v^2)
-    end
-
-    if rankx == (Nprocs[1]-1) && i > Nxp+NG
+    # Left Boundary (Inlet side) -> Zero Gradient (Outflow/Transmissive)
+    # 也就是 ghost cell 等于内部第一个网格的值
+    if rankx == 0 && i <= NG
+        # 对应内部网格索引 NG+1 (或者镜像，这里简单的取边界值即可)
+        idx_inner = NG + 1
+        
         for n = 1:Nprim
-            @inbounds Q[i, j, k, n] = Q[Nxp+NG, j, k, n]
+            @inbounds Q[i, j, k, n] = Q[idx_inner, j, k, n]
         end
         for n = 1:Ncons
-            @inbounds U[i, j, k, n] = U[Nxp+NG, j, k, n]
+            @inbounds U[i, j, k, n] = U[idx_inner, j, k, n]
+        end
+    end
+
+    # Right Boundary (Outlet side) -> Zero Gradient
+    if rankx == (Nprocs[1]-1) && i > Nxp+NG
+        idx_inner = Nxp + NG
+        
+        for n = 1:Nprim
+            @inbounds Q[i, j, k, n] = Q[idx_inner, j, k, n]
+        end
+        for n = 1:Ncons
+            @inbounds U[i, j, k, n] = U[idx_inner, j, k, n]
         end
     end
     return
@@ -79,101 +71,138 @@ function fill_y(Q, U, rankx, ranky)
         return
     end
 
+    # Bottom Wall (ranky == 0)
+    if ranky == 0 && j <= NG
+        # 对称边界/滑移壁面逻辑：
+        # 标量(rho, p, T, u, w) 关于边界对称 -> Ghost = Inner
+        # 法向矢量(v) 关于边界反对称 -> Ghost = -Inner (确保壁面处 v=0)
+        
+        # 对应的内部网格索引。例如 j=NG 对应 j=NG+1
+        # 简单的镜像索引逻辑: j_inner = 2*NG + 1 - j (如果 ghost 是 l=NG:-1:1)
+        # 但为了简单的零梯度滑移，直接取最近的内部点通常足够稳定：
+        j_inner = 2*NG + 1 - j 
 
-    if ranky == 0 && j == NG+1
+        @inbounds Q[i, j, k, 1] = Q[i, j_inner, k, 1] # rho
+        @inbounds Q[i, j, k, 2] = Q[i, j_inner, k, 2] # u
+        @inbounds Q[i, j, k, 3] = -Q[i, j_inner, k, 3] # v (反向)
+        @inbounds Q[i, j, k, 4] = Q[i, j_inner, k, 4] # w
+        @inbounds Q[i, j, k, 5] = Q[i, j_inner, k, 5] # p
+        @inbounds Q[i, j, k, 6] = Q[i, j_inner, k, 6] # T
 
-        if rankx == 0 && i >= 50 && i <= 70
-            v_turb::Float32 = sin((i-50)/20*2π)*cos(k/100*4π)*600f0*0.1f0
-        else
-            v_turb = 0.f0
-        end
+        # 更新守恒变量 U
+        ρ = Q[i, j, k, 1]
+        u = Q[i, j, k, 2]
+        v = Q[i, j, k, 3]
+        w = Q[i, j, k, 4]
+        p = Q[i, j, k, 5]
+        
+        @inbounds U[i, j, k, 1] = ρ
+        @inbounds U[i, j, k, 2] = ρ * u
+        @inbounds U[i, j, k, 3] = ρ * v
+        @inbounds U[i, j, k, 4] = ρ * w
+        @inbounds U[i, j, k, 5] = p/(γ-1) + 0.5f0 * ρ * (u^2+v^2+w^2)
+    end
 
-        pw = (2*Q[i, j+1, k, 5] - 0.5f0*Q[i, j+2, k, 5])/1.5f0
-        Tw = 307.f0
-        ρw = pw/(Rg * Tw)
-        @inbounds Q[i, j, k, 5] = pw
-        @inbounds Q[i, j, k, 1] = ρw
-        @inbounds Q[i, j, k, 2] = 0
-        @inbounds Q[i, j, k, 3] = v_turb
-        @inbounds Q[i, j, k, 4] = 0
-        @inbounds Q[i, j, k, 6] = Tw
+    # Top Wall (ranky == end)
+    if ranky == (Nprocs[2]-1) && j > Nyp+NG
+        j_inner = 2*(Nyp+NG) + 1 - j # 镜像索引
 
-        @inbounds U[i, j, k, 1] = ρw
-        @inbounds U[i, j, k, 2] = 0
-        @inbounds U[i, j, k, 3] = ρw * v_turb
-        @inbounds U[i, j, k, 4] = 0
-        @inbounds U[i, j, k, 5] = pw/(γ-1) + 0.5*ρw*v_turb^2
+        @inbounds Q[i, j, k, 1] = Q[i, j_inner, k, 1]
+        @inbounds Q[i, j, k, 2] = Q[i, j_inner, k, 2]
+        @inbounds Q[i, j, k, 3] = -Q[i, j_inner, k, 3] # v 反向
+        @inbounds Q[i, j, k, 4] = Q[i, j_inner, k, 4]
+        @inbounds Q[i, j, k, 5] = Q[i, j_inner, k, 5]
+        @inbounds Q[i, j, k, 6] = Q[i, j_inner, k, 6]
 
-        for l = NG:-1:1
-            u = -Q[i, 2*NG+2-l, k, 2]
-            v = -Q[i, 2*NG+2-l, k, 3] + 2*v_turb
-            w = -Q[i, 2*NG+2-l, k, 4]
-            T = max(2*Q[i, l+1, k, 6]-Q[i, l+2, k, 6], Tw*0.5f0)
-            p = Q[i, 2*NG+2-l, k, 5]
-            ρ = p/(Rg*T)
-
-            @inbounds Q[i, l, k, 5] = p
-            @inbounds Q[i, l, k, 1] = ρ
-            @inbounds Q[i, l, k, 2] = u
-            @inbounds Q[i, l, k, 3] = v
-            @inbounds Q[i, l, k, 4] = w
-            @inbounds Q[i, l, k, 6] = T
-
-            @inbounds U[i, l, k, 1] = ρ
-            @inbounds U[i, l, k, 2] = ρ * u
-            @inbounds U[i, l, k, 3] = ρ * v
-            @inbounds U[i, l, k, 4] = ρ * w
-            @inbounds U[i, l, k, 5] = p/(γ-1) + 0.5f0 * ρ * (u^2+v^2+w^2)
-        end
-    elseif ranky == (Nprocs[2]-1) && j > Nyp+NG
-        for n = 1:Nprim
-            @inbounds Q[i, j, k, n] = Q[i, Nyp+NG, k, n]
-        end
-        for n = 1:Ncons
-            @inbounds U[i, j, k, n] = U[i, Nyp+NG, k, n]
-        end
+        ρ = Q[i, j, k, 1]
+        u = Q[i, j, k, 2]
+        v = Q[i, j, k, 3]
+        w = Q[i, j, k, 4]
+        p = Q[i, j, k, 5]
+        
+        @inbounds U[i, j, k, 1] = ρ
+        @inbounds U[i, j, k, 2] = ρ * u
+        @inbounds U[i, j, k, 3] = ρ * v
+        @inbounds U[i, j, k, 4] = ρ * w
+        @inbounds U[i, j, k, 5] = p/(γ-1) + 0.5f0 * ρ * (u^2+v^2+w^2)
     end
     return
 end
 
-# special treatment on wall
-# fill Q and U
-function fillGhost(Q, U, rankx, ranky, inlet)
-    @cuda threads=nthreads blocks=nblock fill_x(Q, U, rankx, ranky, inlet)
-    @cuda threads=nthreads blocks=nblock fill_y(Q, U, rankx, ranky)
-    @cuda threads=nthreads blocks=nblock fill_z(Q, U)
+# Wrapper for Ghost Filling
+function fillGhost(Q, U, rankx, ranky)
+    # 注意：inlet 参数已被移除，因为 Sod 问题不需要外部入口文件
+    @cuda threads=nthreads blocks=nblock fill_x(Q, U, rankx, ranky)
+    # @cuda threads=nthreads blocks=nblock fill_y(Q, U, rankx, ranky)
+    # @cuda threads=nthreads blocks=nblock fill_z(Q, U)
 end
 
-
-function init(Q, inlet, ranky)
+# -----------------------------------------------------------------
+# 初始化条件：标准 Sod 激波管问题
+# 左侧 (x < 0.5): rho=1, p=1, u=0
+# 右侧 (x > 0.5): rho=0.125, p=0.1, u=0
+# -----------------------------------------------------------------
+function init(Q, U, rankx, ranky, Nprocs)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
 
-    if i > Nxp+2*NG || j > Nyp+NG || j < NG+1 || k > Nzp+2*NG
+    if i > Nxp+2*NG || j > Nyp+2*NG || k > Nzp+2*NG
         return
     end
+    
+    # 只初始化计算域内部，Ghost cell 由 fillGhost 处理
+    # 但为了简单起见，全场初始化也没问题，之后第一次迭代前必须调用 fillGhost
+    if i >= NG+1 && i <= Nxp+NG && j >= NG+1 && j <= Nyp+NG && k >= NG+1 && k <= Nzp+NG
+        
+        # 计算全局索引，用于判断隔膜位置
+        # 假设总长为 1.0，通过 Grid Index 判断位置
+        # Global Index (1-based relative to physical domain start)
+        gid_x = (i - NG) + rankx * Nxp 
+        total_Nx = Nxp * Nprocs[1]
+        
+        # 设定隔膜在中间
+        is_left = gid_x <= (total_Nx / 2)
 
-    T_ref = 107.1f0
-    u_ref = 609.1f0
-    ρ_ref = 0.077f0
+        if is_left
+            # Left State
+            ρ = 1.0f0
+            p = 1.0f0
+            u = 0.0f0
+            v = 0.0f0
+            w = 0.0f0
+        else
+            # Right State
+            ρ = 0.125f0
+            p = 0.1f0
+            u = 0.0f0
+            v = 0.0f0
+            w = 0.0f0
+        end
+        
+        # 计算温度 T = p / (rho * Rg)
+        T = p / (ρ * Rg)
 
-    ρ = inlet[j-NG+ranky*Nyp, 1] * ρ_ref
-    u = inlet[j-NG+ranky*Nyp, 2] * u_ref
-    v = inlet[j-NG+ranky*Nyp, 3] * u_ref
-    T = inlet[j-NG+ranky*Nyp, 4] * T_ref
-    p = ρ * Rg * T
+        # 填充 Primitive Variables Q
+        @inbounds Q[i, j, k, 1] = ρ
+        @inbounds Q[i, j, k, 2] = u
+        @inbounds Q[i, j, k, 3] = v
+        @inbounds Q[i, j, k, 4] = w
+        @inbounds Q[i, j, k, 5] = p
+        @inbounds Q[i, j, k, 6] = T
 
-    @inbounds Q[i, j, k, 1] = ρ
-    @inbounds Q[i, j, k, 2] = u
-    @inbounds Q[i, j, k, 3] = v
-    @inbounds Q[i, j, k, 4] = 0
-    @inbounds Q[i, j, k, 6] = T
-    @inbounds Q[i, j, k, 5] = p
+        # 填充 Conservative Variables U
+        @inbounds U[i, j, k, 1] = ρ
+        @inbounds U[i, j, k, 2] = ρ * u
+        @inbounds U[i, j, k, 3] = ρ * v
+        @inbounds U[i, j, k, 4] = ρ * w
+        @inbounds U[i, j, k, 5] = p/(γ-1) + 0.5f0 * ρ * (u^2+v^2+w^2)
+    end
     return
 end
 
-#initialization on GPU
-function initialize(Q, inlet, ranky)
-    @cuda threads=nthreads blocks=nblock init(Q, inlet, ranky)
+# Initialization wrapper
+# 注意：这里我添加了 U, rankx, Nprocs 到参数列表
+function initialize(Q, U, rankx, ranky, Nprocs)
+    @cuda threads=nthreads blocks=nblock init(Q, U, rankx, ranky, Nprocs)
 end

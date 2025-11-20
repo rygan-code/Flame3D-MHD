@@ -17,55 +17,63 @@ include("IO.jl")
 
 function flowAdvance(U, Q, Fp, Fm, Fx, Fy, Fz, Fv_x, Fv_y, Fv_z, s1, s2, s3, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J, ϕ)
 
-    if splitMethod == "SW"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
-    elseif splitMethod == "LF"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_LF(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
-    elseif splitMethod == "VL"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_VL(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
-    elseif splitMethod == "AUSM"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_AUSM(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
+    if finite_volume
+        if eigen_reconstruction
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
+        end
     else
-        error("Not valid split method")
-    end
-    if character
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_xc(Fx, ϕ, s1, Fp, Fm, Q, dξdx, dξdy, dξdz)
-    else
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_x(Fx, ϕ, s1, Fp, Fm, Ncons)
-    end
+        if splitMethod == "SW"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
+        elseif splitMethod == "LF"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_LF(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
+        elseif splitMethod == "VL"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_VL(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
+        elseif splitMethod == "AUSM"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_AUSM(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
+        else
+            error("Not valid split method")
+        end
+        if character
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_xc(Fx, ϕ, s1, Fp, Fm, Q, dξdx, dξdy, dξdz)
+        else
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_x(Fx, ϕ, s1, Fp, Fm, Ncons)
+        end
 
-    if splitMethod == "SW"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
-    elseif splitMethod == "LF"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_LF(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
-    elseif splitMethod == "VL"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_VL(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
-    elseif splitMethod == "AUSM"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_AUSM(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
-    else
-        error("Not valid split method")
-    end
-    if character
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_yc(Fy, ϕ, s2, Fp, Fm, Q, dηdx, dηdy, dηdz)
-    else
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_y(Fy, ϕ, s2, Fp, Fm, Ncons)
-    end
+        if splitMethod == "SW"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
+        elseif splitMethod == "LF"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_LF(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
+        elseif splitMethod == "VL"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_VL(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
+        elseif splitMethod == "AUSM"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_AUSM(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
+        else
+            error("Not valid split method")
+        end
+        if character
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_yc(Fy, ϕ, s2, Fp, Fm, Q, dηdx, dηdy, dηdz)
+        else
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_y(Fy, ϕ, s2, Fp, Fm, Ncons)
+        end
 
-    if splitMethod == "SW"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s3, dζdx, dζdy, dζdz)
-    elseif splitMethod == "LF"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_LF(Q, Fp, Fm, s3, dζdx, dζdy, dζdz)
-    elseif splitMethod == "VL"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_VL(Q, Fp, Fm, s3, dζdx, dζdy, dζdz)
-    elseif splitMethod == "AUSM"
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_AUSM(Q, Fp, Fm, s3, dζdx, dζdy, dζdz)
-    else
-        error("Not valid split method")
-    end
-    if character
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_zc(Fz, ϕ, s3, Fp, Fm, Q, dζdx, dζdy, dζdz)
-    else
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_z(Fz, ϕ, s3, Fp, Fm, Ncons)
+        if splitMethod == "SW"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s3, dζdx, dζdy, dζdz)
+        elseif splitMethod == "LF"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_LF(Q, Fp, Fm, s3, dζdx, dζdy, dζdz)
+        elseif splitMethod == "VL"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_VL(Q, Fp, Fm, s3, dζdx, dζdy, dζdz)
+        elseif splitMethod == "AUSM"
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_AUSM(Q, Fp, Fm, s3, dζdx, dζdy, dζdz)
+        else
+            error("Not valid split method")
+        end
+        if character
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_zc(Fz, ϕ, s3, Fp, Fm, Q, dζdx, dζdy, dζdz)
+        else
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_z(Fz, ϕ, s3, Fp, Fm, Ncons)
+        end
     end
 
     @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock viscousFlux(Fv_x, Fv_y, Fv_z, Q, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J)

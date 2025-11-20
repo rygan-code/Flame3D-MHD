@@ -16,7 +16,7 @@ const Pr::Float32 = 0.72
 const mesh::String = "mesh.h5"
 const metrics::String = "metrics.h5"
 const Nprocs::SVector{3, Int64} = [1,1,1] # number of GPUs
-const Iperiodic = (false, false, false)   # periodic direction
+const Iperiodic = (false, true, true)   # periodic direction
 
 const LTS::Bool = false              # if use LTS (local time stepping)
 const LTS_CFL::Float32 = 0.5f0       # LTS auto Δt CFL
@@ -56,6 +56,11 @@ const filtering_s0::Float32 = 1.f0         # filtering strength
 # do not change 
 const Ncons::Int64 = 5 # ρ ρu ρv ρw E 
 const Nprim::Int64 = 6 # ρ u v w p T
+
+# finite volume scheme
+const finite_volume::Bool = true   # if use finite volume scheme, else finite difference
+const eigen_reconstruction::Bool = true  # if use eigen reconstruction
+
 # scheme constant
 const character::Bool = true        # Characteristic-wise reconstruction or not
 const splitMethod::String = "SW"    # options are: SW, LF, VL, AUSM
