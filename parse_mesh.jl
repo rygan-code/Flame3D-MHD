@@ -3,10 +3,12 @@ using HDF5
 using WriteVTK
 
 const NG::Int64 = 4
-const Nx::Int64 = 300
-const Ny::Int64 = 128
-const Nz::Int64 = 128
-const Lx::Float32 = 4
+const Nx::Int64 = 256
+const Ny::Int64 = 32
+const Nz::Int64 = 32
+const Lx::Float32 = 5.0
+const Ly::Float32 = 1.0
+const Lz::Float32 = 1.0
 const Nx_tot::Int64 = Nx + 2*NG
 const Ny_tot::Int64 = Ny + 2*NG
 const Nz_tot::Int64 = Nz + 2*NG
@@ -17,35 +19,24 @@ x = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
 y = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
 z = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
 
+# 生成均匀笛卡尔网格 (Uniform Cartesian Grid)
+# x: 0.0 -> 5.0
+# y: 0.0 -> 1.0
+# z: 0.0 -> 1.0
 
-
-@inbounds for k ∈ 1:Nz, j ∈ 1:Ny, i ∈ 1:Nx
-    Rmin::Float32 = 0.0
-    Rmax::Float32 = 5.0
-    Rstar::Float32 = 2.0
-    α::Float32 = 0.5
-    c1 = asinh((Rmin-Rstar)/α)
-    c2 = asinh((Rmax-Rstar)/α)
-    x[i+NG, j+NG, k+NG] = Rstar + α * sinh(c1*(1-(i-1)/(Nx-1)) +c2*(i-1)/(Nx-1))
-end
-
-R0::Float32 = 0.1
-R1::Float32 = 0.7
-α::Float32 = 0.03
 @inbounds for k ∈ 1:Nz
     for j ∈ 1:Ny
         for i ∈ 1:Nx
-            Rmin = tan(7/180*π) * x[i+NG, j+NG, k+NG] + R0
-            Rmax = tan(13/180*π) * x[i+NG, j+NG, k+NG] + R1
+            # 计算归一化坐标 (0.0 到 1.0)
+            # 注意转为 Float32 避免类型不匹配
+            ξ::Float32 = Float32(i-1) / Float32(Nx-1)
+            η::Float32 = Float32(j-1) / Float32(Ny-1)
+            ζ::Float32 = Float32(k-1) / Float32(Nz-1)
 
-            Rstar = Rmin
-            c1 = asinh((Rmin-Rstar)/α)
-            c2 = asinh((Rmax-Rstar)/α)
-            R = Rstar + α * sinh(c1*(1-(j-1)/(Ny-1)) +c2*(j-1)/(Ny-1))
-
-            θ = 90 - (k-1)/(Nz-1) * 180
-            y[i+NG, j+NG, k+NG] = R*sin(θ/180*π)
-            z[i+NG, j+NG, k+NG] = R*cos(θ/180*π)
+            # 线性映射到物理坐标
+            x[i+NG, j+NG, k+NG] = Lx * ξ
+            y[i+NG, j+NG, k+NG] = Ly * η
+            z[i+NG, j+NG, k+NG] = Lz * ζ
         end
     end
 end

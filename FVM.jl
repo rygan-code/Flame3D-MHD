@@ -1,251 +1,235 @@
 include("schemes.jl")
 
+# const SCALE_FACTOR = 1.0f10
+# const INV_SCALE_FACTOR = 1.0f-10
+
 function Eigen_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
     
+    # 1. 边界检查
     if i > Nxp+NG || j > Nyp+NG || k > Nzp+NG || i < NG || j < NG+1 || k < NG+1
         return
     end
-
-    @inbounds nx::Float32 = (dξdx[i, j, k] + dξdx[i+1, j, k]) * 0.5f0
-    @inbounds ny::Float32 = (dξdy[i, j, k] + dξdy[i+1, j, k]) * 0.5f0
-    @inbounds nz::Float32 = (dξdz[i, j, k] + dξdz[i+1, j, k]) * 0.5f0
-    @inbounds inv_len = 1.0f0 / sqrt(nx^2 + ny^2 + nz^2 + 1e-12f0)
+    # 2. 几何计算
+    @inbounds nx = (dξdx[i, j, k] + dξdx[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
+    @inbounds ny = (dξdy[i, j, k] + dξdy[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
+    @inbounds nz = (dξdz[i, j, k] + dξdz[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
+    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
+    @inbounds inv_len = 1.0f0 / Area
     @inbounds nx *= inv_len
     @inbounds ny *= inv_len
     @inbounds nz *= inv_len
+    # @inbounds Area *= INV_SCALE_FACTOR
+    # @cuprintf("nx=%e, ny=%e, nz=%e, Area=%e\n", nx, ny, nz, Area)
 
-    # left state reconstruction at i+1/2
-    @inbounds begin
-        u11 = U[i-3, j, k, 1]; u12 = U[i-2, j, k, 1]; u13 = U[i-1, j, k, 1]; u14 = U[i, j, k, 1]; u15 = U[i+1, j, k, 1]; u16 = U[i+2, j, k, 1]; u17 = U[i+3, j, k, 1]
-        u21 = U[i-3, j, k, 2]; u22 = U[i-2, j, k, 2]; u23 = U[i-1, j, k, 2]; u24 = U[i, j, k, 2]; u25 = U[i+1, j, k, 2]; u26 = U[i+2, j, k, 2]; u27 = U[i+3, j, k, 2]
-        u31 = U[i-3, j, k, 3]; u32 = U[i-2, j, k, 3]; u33 = U[i-1, j, k, 3]; u34 = U[i, j, k, 3]; u35 = U[i+1, j, k, 3]; u36 = U[i+2, j, k, 3]; u37 = U[i+3, j, k, 3]
-        u41 = U[i-3, j, k, 4]; u42 = U[i-2, j, k, 4]; u43 = U[i-1, j, k, 4]; u44 = U[i, j, k, 4]; u45 = U[i+1, j, k, 4]; u46 = U[i+2, j, k, 4]; u47 = U[i+3, j, k, 4]
-        u51 = U[i-3, j, k, 5]; u52 = U[i-2, j, k, 5]; u53 = U[i-1, j, k, 5]; u54 = U[i, j, k, 5]; u55 = U[i+1, j, k, 5]; u56 = U[i+2, j, k, 5]; u57 = U[i+3, j, k, 5]
-    end
-    UL = SMatrix{5,7,Float32}(
-        u11, u21, u31, u41, u51,
-        u12, u22, u32, u42, u52,
-        u13, u23, u33, u43, u53,
-        u14, u24, u34, u44, u54,
-        u15, u25, u35, u45, u55,
-        u16, u26, u36, u46, u56,
-        u17, u27, u37, u47, u57
-    )
-    # right state reconstruction at i+1/2
-    @inbounds begin
-        u11 = U[i+4, j, k, 1]; u12 = U[i+3, j, k, 1]; u13 = U[i+2, j, k, 1]; u14 = U[i+1, j, k, 1]; u15 = U[i, j, k, 1]; u16 = U[i-1, j, k, 1]; u17 = U[i-2, j, k, 1]
-        u21 = U[i+4, j, k, 2]; u22 = U[i+3, j, k, 2]; u23 = U[i+2, j, k, 2]; u24 = U[i+1, j, k, 2]; u25 = U[i, j, k, 2]; u26 = U[i-1, j, k, 2]; u27 = U[i-2, j, k, 2]
-        u31 = U[i+4, j, k, 3]; u32 = U[i+3, j, k, 3]; u33 = U[i+2, j, k, 3]; u34 = U[i+1, j, k, 3]; u35 = U[i, j, k, 3]; u36 = U[i-1, j, k, 3]; u37 = U[i-2, j, k, 3]
-        u41 = U[i+4, j, k, 4]; u42 = U[i+3, j, k, 4]; u43 = U[i+2, j, k, 4]; u44 = U[i+1, j, k, 4]; u45 = U[i, j, k, 4]; u46 = U[i-1, j, k, 4]; u47 = U[i-2, j, k, 4]
-        u51 = U[i+4, j, k, 5]; u52 = U[i+3, j, k, 5]; u53 = U[i+2, j, k, 5]; u54 = U[i+1, j, k, 5]; u55 = U[i, j, k, 5]; u56 = U[i-1, j, k, 5]; u57 = U[i-2, j, k, 5]
-    end
-    UR = SMatrix{5,7,Float32}(
-        u11, u21, u31, u41, u51,
-        u12, u22, u32, u42, u52,
-        u13, u23, u33, u43, u53,
-        u14, u24, u34, u44, u54,
-        u15, u25, u35, u45, u55,
-        u16, u26, u36, u46, u56,
-        u17, u27, u37, u47, u57
-    )
-    UL_interp = MVector{5,Float32}(undef)
-    UR_interp = MVector{5,Float32}(undef)
+    # 3. 激波传感器
+    @inbounds ϕx = max(ϕ[i-2, j, k], ϕ[i-1, j, k], ϕ[i, j, k], ϕ[i+1, j, k], ϕ[i+2, j, k], ϕ[i+3, j, k])
 
-    # Jameson sensor
-    @inbounds ϕx = max(ϕ[i-2, j, k], 
-                    ϕ[i-1, j, k], 
-                    ϕ[i  , j, k], 
-                    ϕ[i+1, j, k], 
-                    ϕ[i+2, j, k], 
-                    ϕ[i+3, j, k])
-    
-    if ϕx < hybrid_ϕ1   # smooth region: use linear reconstruction and primitive variables
-        c_vec = SVector{7,Float32}(Linear[1], Linear[2], Linear[3], Linear[4], Linear[5], Linear[6], Linear[7])
-        UL_interp = UL * c_vec              # 5×1
-        UR_interp = UR * c_vec              # 5×1
-    else # discontinuous region: use characteristic decomposition and nonlinear reconstruction
+    # 准备最终累加变量
+    UL_final_1 = 0.0f0; UL_final_2 = 0.0f0; UL_final_3 = 0.0f0; UL_final_4 = 0.0f0; UL_final_5 = 0.0f0
+    UR_final_1 = 0.0f0; UR_final_2 = 0.0f0; UR_final_3 = 0.0f0; UR_final_4 = 0.0f0; UR_final_5 = 0.0f0
 
-        @inbounds if abs(nz) <= abs(ny)
-            @inbounds den::Float32 = sqrt(nx^2 + ny^2 + 1e-12f0)
-            @inbounds lx::Float32 = -ny / den
-            @inbounds ly::Float32 =  nx / den
-            @inbounds lz::Float32 =  0.0f0
-        else
-            @inbounds den::Float32 = sqrt(nx^2 + nz^2 + 1e-12f0)
-            @inbounds lx::Float32 = -nz / den
-            @inbounds ly::Float32 =  0.0f0
-            @inbounds lz::Float32 =  nx / den
+    # ==============================
+    # 分支 A: 光滑区 (极速模式)
+    # ==============================
+    if ϕx < hybrid_ϕ1
+        for n = 1:5
+            @inbounds v1 = U[i-3,j,k,n]; v2 = U[i-2,j,k,n]; v3 = U[i-1,j,k,n]
+            @inbounds v4 = U[i  ,j,k,n]; v5 = U[i+1,j,k,n]; v6 = U[i+2,j,k,n]; v7 = U[i+3,j,k,n]
+            
+            valL = Linear[1]*v1 + Linear[2]*v2 + Linear[3]*v3 + Linear[4]*v4 + Linear[5]*v5 + Linear[6]*v6 + Linear[7]*v7
+            
+            @inbounds r1 = U[i+4,j,k,n]; r2 = U[i+3,j,k,n]; r3 = U[i+2,j,k,n]
+            @inbounds r4 = U[i+1,j,k,n]; r5 = U[i  ,j,k,n]; r6 = U[i-1,j,k,n]; r7 = U[i-2,j,k,n]
+            
+            valR = Linear[1]*r1 + Linear[2]*r2 + Linear[3]*r3 + Linear[4]*r4 + Linear[5]*r5 + Linear[6]*r6 + Linear[7]*r7
+
+            if n==1; UL_final_1=valL; UR_final_1=valR
+            elseif n==2; UL_final_2=valL; UR_final_2=valR
+            elseif n==3; UL_final_3=valL; UR_final_3=valR
+            elseif n==4; UL_final_4=valL; UR_final_4=valR
+            else; UL_final_5=valL; UR_final_5=valR; end
         end
 
-        @inbounds mx::Float32 = ny * lz - nz * ly
-        @inbounds my::Float32 = nz * lx - nx * lz
-        @inbounds mz::Float32 = nx * ly - ny * lx
-
-        # roe averages at i+1/2
+    # ==============================
+    # 分支 B: 间断区 (特征分解模式)
+    # ==============================
+    else 
         @inbounds ρ = sqrt(Q[i, j, k, 1] * Q[i+1, j, k, 1])
         @inbounds u = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 2] + sqrt(Q[i+1, j, k, 1]) * Q[i+1, j, k, 2]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i+1, j, k, 1]))
         @inbounds v = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 3] + sqrt(Q[i+1, j, k, 1]) * Q[i+1, j, k, 3]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i+1, j, k, 1]))
         @inbounds w = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 4] + sqrt(Q[i+1, j, k, 1]) * Q[i+1, j, k, 4]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i+1, j, k, 1]))
-        @inbounds HL = γ/(γ-1f0)*Q[i, j, k, 5]/Q[i, j, k, 1] + 0.5f0*(Q[i, j, k, 2]^2 + Q[i, j, k, 3]^2 + Q[i, j, k, 4]^2)
-        @inbounds HR = γ/(γ-1f0)*Q[i+1, j, k, 5]/Q[i+1, j, k, 1] + 0.5f0*(Q[i+1, j, k, 2]^2 + Q[i+1, j, k, 3]^2 + Q[i+1, j, k, 4]^2)
+        @inbounds HL = γ/(γ-1.0f0)*Q[i, j, k, 5]/Q[i, j, k, 1] + 0.5f0*(Q[i, j, k, 2]^2 + Q[i, j, k, 3]^2 + Q[i, j, k, 4]^2)
+        @inbounds HR = γ/(γ-1.0f0)*Q[i+1, j, k, 5]/Q[i+1, j, k, 1] + 0.5f0*(Q[i+1, j, k, 2]^2 + Q[i+1, j, k, 3]^2 + Q[i+1, j, k, 4]^2)
         @inbounds H = (sqrt(Q[i, j, k, 1]) * HL + sqrt(Q[i+1, j, k, 1]) * HR) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i+1, j, k, 1]))
-        @inbounds v2 = 0.5f0*(u^2 + v^2 + w^2)
-        @inbounds c = sqrt((γ-1f0)*(H - v2))
-        @inbounds un = u*nx + v*ny + w*nz
-        @inbounds ul = u*lx + v*ly + w*lz
-        @inbounds um = u*mx + v*my + w*mz
-        @inbounds K = γ-1f0
-
-        @inbounds begin
-            invc = 1f0/c; invc2 = invc*invc
-            Ku = K*u*invc2; Kv = K*v*invc2; Kw = K*w*invc2
-            Kv2 = K*v2*invc2; Kc2 = K*invc2
-            un_invc = un*invc; nx_invc = nx*invc; ny_invc = ny*invc; nz_invc = nz*invc
-            half = 0.5f0; mhalf = -0.5f0
+        
+        v2 = 0.5f0*(u^2 + v^2 + w^2)
+        c = sqrt((γ-1.0f0)*(H - v2))
+        
+        if abs(nz) <= abs(ny)
+            den = sqrt(nx*nx + ny*ny + 1.0f-12); lx = -ny / den; ly = nx / den; lz = 0.0f0
+        else
+            den = sqrt(nx*nx + nz*nz + 1.0f-12); lx = -nz / den; ly = 0.0f0; lz = nx / den
         end
-        @inbounds Ln11 = half*(Kv2 + un_invc);  Ln12 = mhalf*(Ku + nx_invc); Ln13 = mhalf*(Kv + ny_invc); Ln14 = mhalf*(Kw + nz_invc); Ln15 = half*Kc2
-        @inbounds Ln21 = 1f0 - Kv2;             Ln22 = Ku;                   Ln23 = Kv;                   Ln24 = Kw;                   Ln25 = -Kc2
-        @inbounds Ln31 = half*(Kv2 - un_invc);  Ln32 = mhalf*(Ku - nx_invc); Ln33 = mhalf*(Kv - ny_invc); Ln34 = mhalf*(Kw - nz_invc); Ln35 = half*Kc2
-        @inbounds Ln41 = -ul;                   Ln42 = lx;                 Ln43 = ly;                 Ln44 = lz;                 Ln45 = 0f0
-        @inbounds Ln51 = -um;                   Ln52 = mx;                 Ln53 = my;                 Ln54 = mz;                 Ln55 = 0f0
+        mx = ny * lz - nz * ly; my = nz * lx - nx * lz; mz = nx * ly - ny * lx
 
-        @inbounds Rn11 = 1f0;            Rn12 = 1f0;      Rn13 = 1f0;            Rn14 = 0f0;      Rn15 = 0f0
-        @inbounds Rn21 = u - nx*c;     Rn22 = u;        Rn23 = u + nx*c;     Rn24 = lx;     Rn25 = mx
-        @inbounds Rn31 = v - ny*c;     Rn32 = v;        Rn33 = v + ny*c;     Rn34 = ly;     Rn35 = my
-        @inbounds Rn41 = w - nz*c;     Rn42 = w;        Rn43 = w + nz*c;     Rn44 = lz;     Rn45 = mz
-        @inbounds Rn51 = H - un*c;     Rn52 = v2;       Rn53 = H + un*c;     Rn54 = ul;     Rn55 = um
+        invc = 1.0f0/c; invc2 = invc*invc
+        K = γ - 1.0f0
+        Ku = K*u*invc2; Kv = K*v*invc2; Kw = K*w*invc2
+        Kv2 = K*v2*invc2; Kc2 = K*invc2
+        un = u*nx + v*ny + w*nz; ul = u*lx + v*ly + w*lz; um = u*mx + v*my + w*mz
+        un_invc = un*invc; nx_invc = nx*invc; ny_invc = ny*invc; nz_invc = nz*invc
+        half = 0.5f0; mhalf = -0.5f0
 
-        # per-thread small static matrices to avoid GPU heap allocation
-        # requires: using StaticArrays
-        L = SMatrix{5,5,Float32}(
-            Ln11, Ln21, Ln31, Ln41, Ln51,
-            Ln12, Ln22, Ln32, Ln42, Ln52,
-            Ln13, Ln23, Ln33, Ln43, Ln53,
-            Ln14, Ln24, Ln34, Ln44, Ln54,
-            Ln15, Ln25, Ln35, Ln45, Ln55
-        )
-        R = SMatrix{5,5,Float32}(
-            Rn11, Rn21, Rn31, Rn41, Rn51,
-            Rn12, Rn22, Rn32, Rn42, Rn52,
-            Rn13, Rn23, Rn33, Rn43, Rn53,
-            Rn14, Rn24, Rn34, Rn44, Rn54,
-            Rn15, Rn25, Rn35, Rn45, Rn55
-        )
+        WENOϵ1 = 1.0f-10; WENOϵ2 = 1.0f-8
+        tmp1 = 1.0f0/12.0f0; tmp2 = 1.0f0/6.0f0
+        @inbounds ss = 2.0f0/(S[i+1, j, k] + S[i, j, k])
 
-        tmp1::Float32 = 1/12f0
-        tmp2::Float32 = 1/6f0
+        for n = 1:5
+            # 2a. 左特征向量 L
+            ln1=0.0f0; ln2=0.0f0; ln3=0.0f0; ln4=0.0f0; ln5=0.0f0
+            if n == 1; ln1 = half*(Kv2 + un_invc); ln2 = mhalf*(Ku + nx_invc); ln3 = mhalf*(Kv + ny_invc); ln4 = mhalf*(Kw + nz_invc); ln5 = half*Kc2
+            elseif n == 2; ln1 = 1.0f0 - Kv2; ln2 = Ku; ln3 = Kv; ln4 = Kw; ln5 = -Kc2
+            elseif n == 3; ln1 = half*(Kv2 - un_invc); ln2 = mhalf*(Ku - nx_invc); ln3 = mhalf*(Kv - ny_invc); ln4 = mhalf*(Kw - nz_invc); ln5 = half*Kc2
+            elseif n == 4; ln1 = -ul; ln2 = lx; ln3 = ly; ln4 = lz; ln5 = 0.0f0
+            else; ln1 = -um; ln2 = mx; ln3 = my; ln4 = mz; ln5 = 0.0f0; end
 
-        WENOϵ1::Float32 = 1e-20
-        WENOϵ2::Float32 = 1f-16
+            # 2b. 投影 U -> V (Local Characteristic Variables)
+            @inbounds V1L = ln1*U[i-3,j,k,1] + ln2*U[i-3,j,k,2] + ln3*U[i-3,j,k,3] + ln4*U[i-3,j,k,4] + ln5*U[i-3,j,k,5]
+            @inbounds V2L = ln1*U[i-2,j,k,1] + ln2*U[i-2,j,k,2] + ln3*U[i-2,j,k,3] + ln4*U[i-2,j,k,4] + ln5*U[i-2,j,k,5]
+            @inbounds V3L = ln1*U[i-1,j,k,1] + ln2*U[i-1,j,k,2] + ln3*U[i-1,j,k,3] + ln4*U[i-1,j,k,4] + ln5*U[i-1,j,k,5]
+            @inbounds V4L = ln1*U[i  ,j,k,1] + ln2*U[i  ,j,k,2] + ln3*U[i  ,j,k,3] + ln4*U[i  ,j,k,4] + ln5*U[i  ,j,k,5]
+            @inbounds V5L = ln1*U[i+1,j,k,1] + ln2*U[i+1,j,k,2] + ln3*U[i+1,j,k,3] + ln4*U[i+1,j,k,4] + ln5*U[i+1,j,k,5]
+            @inbounds V6L = ln1*U[i+2,j,k,1] + ln2*U[i+2,j,k,2] + ln3*U[i+2,j,k,3] + ln4*U[i+2,j,k,4] + ln5*U[i+2,j,k,5]
+            @inbounds V7L = ln1*U[i+3,j,k,1] + ln2*U[i+3,j,k,2] + ln3*U[i+3,j,k,3] + ln4*U[i+3,j,k,4] + ln5*U[i+3,j,k,5]
 
-        @inbounds ss::Float32 = 2/(S[i+1, j, k] + S[i, j, k]) 
+            @inbounds V1R = ln1*U[i+4,j,k,1] + ln2*U[i+4,j,k,2] + ln3*U[i+4,j,k,3] + ln4*U[i+4,j,k,4] + ln5*U[i+4,j,k,5]
+            @inbounds V2R = ln1*U[i+3,j,k,1] + ln2*U[i+3,j,k,2] + ln3*U[i+3,j,k,3] + ln4*U[i+3,j,k,4] + ln5*U[i+3,j,k,5]
+            @inbounds V3R = ln1*U[i+2,j,k,1] + ln2*U[i+2,j,k,2] + ln3*U[i+2,j,k,3] + ln4*U[i+2,j,k,4] + ln5*U[i+2,j,k,5]
+            @inbounds V4R = ln1*U[i+1,j,k,1] + ln2*U[i+1,j,k,2] + ln3*U[i+1,j,k,3] + ln4*U[i+1,j,k,4] + ln5*U[i+1,j,k,5]
+            @inbounds V5R = ln1*U[i  ,j,k,1] + ln2*U[i  ,j,k,2] + ln3*U[i  ,j,k,3] + ln4*U[i  ,j,k,4] + ln5*U[i  ,j,k,5]
+            @inbounds V6R = ln1*U[i-1,j,k,1] + ln2*U[i-1,j,k,2] + ln3*U[i-1,j,k,3] + ln4*U[i-1,j,k,4] + ln5*U[i-1,j,k,5]
+            @inbounds V7R = ln1*U[i-2,j,k,1] + ln2*U[i-2,j,k,2] + ln3*U[i-2,j,k,3] + ln4*U[i-2,j,k,4] + ln5*U[i-2,j,k,5]
 
-        WL = L * UL  # 5×7 per-thread array; WL[r,c] corresponds to old WL{r}{c}
-        WR = L * UR  # 5×7 per-thread array
-        
-        WL_interp = MVector{5,Float32}(undef)
-        WR_interp = MVector{5,Float32}(undef)
-        if ϕx < hybrid_ϕ2   # WENO region: use WENO reconstruction and characteristic variables
-            for n = 1:NV
-                @inbounds V1L = WL[n, 1]; V1R = WR[n, 1];
-                @inbounds V2L = WL[n, 2]; V2R = WR[n, 2];
-                @inbounds V3L = WL[n, 3]; V3R = WR[n, 3];
-                @inbounds V4L = WL[n, 4]; V4R = WR[n, 4];
-                @inbounds V5L = WL[n, 5]; V5R = WR[n, 5];
-                @inbounds V6L = WL[n, 6]; V6R = WR[n, 6];
-                @inbounds V7L = WL[n, 7]; V7R = WR[n, 7];
-        
-                # polinomia
-                q1L = -3V1L+13V2L-23V3L+25V4L   ; q1R = -3V1R+13V2R-23V3R+25V4R   
-                q2L = V2L-5V3L+13V4L+3V5L       ; q2R = V2R-5V3R+13V4R+3V5R
-                q3L = -V3L+7V4L+7V5L-V6L        ; q3R = -V3R+7V4R+7V5R-V6R
-                q4L = 3V4L+13V5L-5V6L+V7L       ; q4R = 3V4R+13V5R-5V6R+V7R
-        
-                # smoothness index
-                Is1L = V1L*( 547V1L - 3882V2L + 4642V3L - 1854V4L) + 
-                    V2L*(          7043V2L -17246V3L + 7042V4L) +
-                    V3L*(                   11003V3L - 9402V4L) +
-                    V4L*(                              2107V4L)
-                Is2L = V2L*( 267V2L - 1642V3L + 1602V4L -  494V5L) +
-                    V3L*(          2843V3L - 5966V4L + 1922V5L) +
-                    V4L*(                    3443V4L - 2522V5L) +
-                    V5L*(                               547V5L)
-                Is3L = V3L*( 547V3L - 2522V4L + 1922V5L -  494V6L) +
-                    V4L*(          3443V4L - 5966V5L + 1602V6L) +
-                    V5L*(                    2843V5L - 1642V6L) +
-                    V6L*(                               267V6L)
-                Is4L = V4L*(2107V4L - 9402V5L + 7042V6L - 1854V7L) +
-                    V5L*(         11003V5L -17246V6L + 4642V7L) +
-                    V6L*(                    7043V6L - 3882V7L) +
-                    V7L*(                               547V7L)
-        
-                Is1R = V1R*( 547V1R - 3882V2R + 4642V3R - 1854V4R) + 
-                    V2R*(          7043V2R -17246V3R + 7042V4R) +
-                    V3R*(                   11003V3R - 9402V4R) +
-                    V4R*(                              2107V4R)
-                Is2R = V2R*( 267V2R - 1642V3R + 1602V4R -  494V5R) +
-                    V3R*(          2843V3R - 5966V4R + 1922V5R) +
-                    V4R*(                    3443V4R - 2522V5R) +
-                    V5R*(                               547V5R)
-                Is3R = V3R*( 547V3R - 2522V4R + 1922V5R -  494V6R) +
-                    V4R*(          3443V4R - 5966V5R + 1602V6R) +
-                    V5R*(                    2843V5R - 1642V6R) +
-                    V6R*(                               267V6R)
-                # alpha
-                α1L = 1/(WENOϵ1+Is1L*ss)^2  ; α1R = 1/(WENOϵ1+Is1R*ss)^2  
-                α2L = 12/(WENOϵ1+Is2L*ss)^2 ; α2R = 12/(WENOϵ1+Is2R*ss)^2 ;
-                α3L = 18/(WENOϵ1+Is3L*ss)^2 ; α3R = 18/(WENOϵ1+Is3R*ss)^2 ;
-                α4L = 4/(WENOϵ1+Is4L*ss)^2  ; α4R = 4/(WENOϵ1+Is4R*ss)^2
-        
-                invsumL = 1/(α1L+α2L+α3L+α4L) ; invsumR = 1/(α1R+α2R+α3R+α4R) 
-        
-                WL_interp[n] = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
-                WR_interp[n] = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
+            valL = 0.0f0; valR = 0.0f0
+
+            # 2c. WENO Reconstruction
+            if ϕx < hybrid_ϕ2 # WENO7
+                q1L = -3.0f0*V1L + 13.0f0*V2L - 23.0f0*V3L + 25.0f0*V4L; q1R = -3.0f0*V1R + 13.0f0*V2R - 23.0f0*V3R + 25.0f0*V4R
+                q2L =  1.0f0*V2L -  5.0f0*V3L + 13.0f0*V4L +  3.0f0*V5L; q2R =  1.0f0*V2R -  5.0f0*V3R + 13.0f0*V4R +  3.0f0*V5R
+                q3L = -1.0f0*V3L +  7.0f0*V4L +  7.0f0*V5L -  1.0f0*V6L; q3R = -1.0f0*V3R +  7.0f0*V4R +  7.0f0*V5R -  1.0f0*V6R
+                q4L =  3.0f0*V4L + 13.0f0*V5L -  5.0f0*V6L +  1.0f0*V7L; q4R =  3.0f0*V4R + 13.0f0*V5R -  5.0f0*V6R +  1.0f0*V7R
+
+                Is1L = V1L*( 547.0f0*V1L - 3882.0f0*V2L + 4642.0f0*V3L - 1854.0f0*V4L) + V2L*( 7043.0f0*V2L -17246.0f0*V3L + 7042.0f0*V4L) + V3L*(11003.0f0*V3L - 9402.0f0*V4L) + V4L*( 2107.0f0*V4L)
+                Is2L = V2L*( 267.0f0*V2L - 1642.0f0*V3L + 1602.0f0*V4L -  494.0f0*V5L) + V3L*( 2843.0f0*V3L - 5966.0f0*V4L + 1922.0f0*V5L) + V4L*( 3443.0f0*V4L - 2522.0f0*V5L) + V5L*(  547.0f0*V5L)
+                Is3L = V3L*( 547.0f0*V3L - 2522.0f0*V4L + 1922.0f0*V5L -  494.0f0*V6L) + V4L*( 3443.0f0*V4L - 5966.0f0*V5L + 1602.0f0*V6L) + V5L*( 2843.0f0*V5L - 1642.0f0*V6L) + V6L*(  267.0f0*V6L)
+                Is4L = V4L*( 2107.0f0*V4L - 9402.0f0*V5L + 7042.0f0*V6L - 1854.0f0*V7L) + V5L*(11003.0f0*V5L -17246.0f0*V6L + 4642.0f0*V7L) + V6L*( 7043.0f0*V6L - 3882.0f0*V7L) + V7L*(  547.0f0*V7L)
+
+                Is1R = V1R*( 547.0f0*V1R - 3882.0f0*V2R + 4642.0f0*V3R - 1854.0f0*V4R) + V2R*( 7043.0f0*V2R -17246.0f0*V3R + 7042.0f0*V4R) + V3R*(11003.0f0*V3R - 9402.0f0*V4R) + V4R*( 2107.0f0*V4R)
+                Is2R = V2R*( 267.0f0*V2R - 1642.0f0*V3R + 1602.0f0*V4R -  494.0f0*V5R) + V3R*( 2843.0f0*V3R - 5966.0f0*V4R + 1922.0f0*V5R) + V4R*( 3443.0f0*V4R - 2522.0f0*V5R) + V5R*(  547.0f0*V5R)
+                Is3R = V3R*( 547.0f0*V3R - 2522.0f0*V4R + 1922.0f0*V5R -  494.0f0*V6R) + V4R*( 3443.0f0*V4R - 5966.0f0*V5R + 1602.0f0*V6R) + V5R*( 2843.0f0*V5R - 1642.0f0*V6R) + V6R*(  267.0f0*V6R)
+                Is4R = V4R*( 2107.0f0*V4R - 9402.0f0*V5R + 7042.0f0*V6R - 1854.0f0*V7R) + V5R*(11003.0f0*V5R -17246.0f0*V6R + 4642.0f0*V7R) + V6R*( 7043.0f0*V6R - 3882.0f0*V7R) + V7R*(  547.0f0*V7R)
+
+                t_d1L = WENOϵ1 + Is1L*ss; α1L = 1.0f0/(t_d1L * t_d1L);  t_d1R = WENOϵ1 + Is1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2L = WENOϵ1 + Is2L*ss; α2L = 12.0f0/(t_d2L * t_d2L); t_d2R = WENOϵ1 + Is2R*ss; α2R = 12.0f0/(t_d2R * t_d2R)
+                t_d3L = WENOϵ1 + Is3L*ss; α3L = 18.0f0/(t_d3L * t_d3L); t_d3R = WENOϵ1 + Is3R*ss; α3R = 18.0f0/(t_d3R * t_d3R)
+                t_d4L = WENOϵ1 + Is4L*ss; α4L = 4.0f0/(t_d4L * t_d4L);  t_d4R = WENOϵ1 + Is4R*ss; α4R = 4.0f0/(t_d4R * t_d4R)
+
+                invsumL = 1.0f0/(α1L+α2L+α3L+α4L); invsumR = 1.0f0/(α1R+α2R+α3R+α4R)
+                valL = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
+                valR = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
+
+                # ... (valL 和 valR 计算完毕) ...
+            
+            # ===  WENO5 分支 ===
+            elseif ϕx < hybrid_ϕ3 # WENO5
+                # 注意：WENO5 只需要 5 个点。
+                # V2L (i-2), V3L (i-1), V4L (i), V5L (i+1), V6L (i+2)
+                # 对应标准 WENO5 的 v1...v5
+                
+                # Left Side
+                # Beta 1: (13/12)(v1-2v2+v3)^2 + (1/4)(v1-4v2+3v3)^2
+                t1 = V2L - 2.0f0*V3L + V4L; t2 = V2L - 4.0f0*V3L + 3.0f0*V4L
+                s1L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                
+                # Beta 2: (13/12)(v2-2v3+v4)^2 + (1/4)(v2-v4)^2
+                t1 = V3L - 2.0f0*V4L + V5L; t2 = V3L - V5L
+                s2L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                
+                # Beta 3: (13/12)(v3-2v4+v5)^2 + (1/4)(3v3-4v4+v5)^2
+                t1 = V4L - 2.0f0*V5L + V6L; t2 = 3.0f0*V4L - 4.0f0*V5L + V6L
+                s3L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                # Weights (d0=1/10, d1=6/10, d2=3/10 -> relative 1, 6, 3)
+                t_d1L = WENOϵ2 + s1L*ss; α1L = 1.0f0/(t_d1L * t_d1L)
+                t_d2L = WENOϵ2 + s2L*ss; α2L = 6.0f0/(t_d2L * t_d2L)
+                t_d3L = WENOϵ2 + s3L*ss; α3L = 3.0f0/(t_d3L * t_d3L)
+                invsumL = 1.0f0/(α1L+α2L+α3L)
+
+                # Candidates
+                v1 = 2.0f0*V2L - 7.0f0*V3L + 11.0f0*V4L
+                v2 = -1.0f0*V3L + 5.0f0*V4L + 2.0f0*V5L
+                v3 = 2.0f0*V4L + 5.0f0*V5L - 1.0f0*V6L
+                
+                valL = invsumL * (α1L*v1 + α2L*v2 + α3L*v3) * tmp2 # tmp2 is 1/6
+
+                # Right Side (Symmetric)
+                # Use V2R...V6R
+                t1 = V2R - 2.0f0*V3R + V4R; t2 = V2R - 4.0f0*V3R + 3.0f0*V4R
+                s1R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3R - 2.0f0*V4R + V5R; t2 = V3R - V5R
+                s2R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4R - 2.0f0*V5R + V6R; t2 = 3.0f0*V4R - 4.0f0*V5R + V6R
+                s3R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                t_d1R = WENOϵ2 + s1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2R = WENOϵ2 + s2R*ss; α2R = 6.0f0/(t_d2R * t_d2R)
+                t_d3R = WENOϵ2 + s3R*ss; α3R = 3.0f0/(t_d3R * t_d3R)
+                invsumR = 1.0f0/(α1R+α2R+α3R)
+
+                v1 = 2.0f0*V2R - 7.0f0*V3R + 11.0f0*V4R
+                v2 = -1.0f0*V3R + 5.0f0*V4R + 2.0f0*V5R
+                v3 = 2.0f0*V4R + 5.0f0*V5R - 1.0f0*V6R
+                
+                valR = invsumR * (α1R*v1 + α2R*v2 + α3R*v3) * tmp2
+
+            else # Minmod
+                valL = V4L + 0.5f0*minmod(V4L - V3L, V5L - V4L)
+                valR = V4R - 0.5f0*minmod(V4R - V3R, V4R - V5R)
             end
-            UL_interp = R * WL_interp              # 5×1
-            UR_interp = R * WR_interp              # 5×1
-        elseif ϕx < hybrid_ϕ3   # extreme WENO region: use WENO reconstruction and characteristic variables with less stencils
-            for n = 1:NV
-                @inbounds V1L = WL[n, 2]; V1R = WR[n, 2];
-                @inbounds V2L = WL[n, 3]; V2R = WR[n, 3];
-                @inbounds V3L = WL[n, 4]; V3R = WR[n, 4];
-                @inbounds V4L = WL[n, 5]; V4R = WR[n, 5];
-                @inbounds V5L = WL[n, 6]; V5R = WR[n, 6];
-                # FP
-                s11L = 13*(V1L-2*V2L+V3L)^2 + 3*(V1L-4*V2L+3*V3L)^2 ; s11R = 13*(V1R-2*V2R+V3R)^2 + 3*(V1R-4*V2R+3*V3R)^2 
-                s22L = 13*(V2L-2*V3L+V4L)^2 + 3*(V2L-V4L)^2         ; s22R = 13*(V2R-2*V3R+V4R)^2 + 3*(V2R-V4R)^2         
-                s33L = 13*(V3L-2*V4L+V5L)^2 + 3*(3*V3L-4*V4L+V5L)^2 ; s33R = 13*(V3R-2*V4R+V5R)^2 + 3*(3*V3R-4*V4R+V5R)^2 
 
-                s11L = 1/(WENOϵ2+s11L*ss)^2 ; s11R = 1/(WENOϵ2+s11R*ss)^2
-                s22L = 6/(WENOϵ2+s22L*ss)^2 ; s22R = 6/(WENOϵ2+s22R*ss)^2
-                s33L = 3/(WENOϵ2+s33L*ss)^2 ; s33R = 3/(WENOϵ2+s33R*ss)^2
-
-                invsumL = 1/(s11L+s22L+s33L); invsumR = 1/(s11R+s22R+s33R);
-
-                v1L = 2*V1L-7*V2L+11*V3L    ; v1R = 2*V1R-7*V2R+11*V3R
-                v2L = -V2L+5*V3L+2*V4L      ; v2R = -V2R+5*V3R+2*V4R
-                v3L = 2*V3L+5*V4L-V5L       ; v3R = 2*V3R+5*V4R-V5R
-                WL_interp[n] = invsumL*(s11L*v1L+s22L*v2L+s33L*v3L) * tmp2
-                WR_interp[n] = invsumR*(s11R*v1R+s22R*v2R+s33R*v3R) * tmp2
-            end
-            UL_interp = R * WL_interp              # 5×1
-            UR_interp = R * WR_interp              # 5×1
-        else    # very extreme case: use minmod limiter in characteristic variables
-            for n = 1:NV
-                @inbounds WL_interp[n] = WL[n, 4] + 0.5f0*minmod(WL[n, 4] - WL[n, 3], 
-                                                            WL[n, 5] - WL[n, 4])
-                @inbounds WR_interp[n] = WR[n, 4] - 0.5f0*minmod(WR[n, 3] - WR[n, 4], 
-                                                            WR[n, 4] - WR[n, 5])
-            end 
-            UL_interp = R * WL_interp              # 5×1
-            UR_interp = R * WR_interp              # 5×1
+            # 2d. 投影回物理空间
+            rn1=0.0f0; rn2=0.0f0; rn3=0.0f0; rn4=0.0f0; rn5=0.0f0
+            if n == 1; rn1=1.0f0; rn2=u-nx*c; rn3=v-ny*c; rn4=w-nz*c; rn5=H-un*c
+            elseif n == 2; rn1=1.0f0; rn2=u; rn3=v; rn4=w; rn5=v2
+            elseif n == 3; rn1=1.0f0; rn2=u+nx*c; rn3=v+ny*c; rn4=w+nz*c; rn5=H+un*c
+            elseif n == 4; rn1=0.0f0; rn2=lx; rn3=ly; rn4=lz; rn5=ul
+            else; rn1=0.0f0; rn2=mx; rn3=my; rn4=mz; rn5=um; end
+            
+            UL_final_1 += rn1 * valL; UR_final_1 += rn1 * valR
+            UL_final_2 += rn2 * valL; UR_final_2 += rn2 * valR
+            UL_final_3 += rn3 * valL; UR_final_3 += rn3 * valR
+            UL_final_4 += rn4 * valL; UR_final_4 += rn4 * valR
+            UL_final_5 += rn5 * valL; UR_final_5 += rn5 * valR
         end
     end
-    Fx[i, j, k, :] = HLLC_Flux(UL_interp, UR_interp, nx, ny, nz)
 
+    # 4. 组装并计算通量
+    UL_vec = SVector{5,Float32}(UL_final_1, UL_final_2, UL_final_3, UL_final_4, UL_final_5)
+    UR_vec = SVector{5,Float32}(UR_final_1, UR_final_2, UR_final_3, UR_final_4, UR_final_5)
+    
+    flux_temp = HLLC_Flux(UL_vec, UR_vec, nx, ny, nz)
+
+    @inbounds begin
+        Fx[i-NG+1, j-NG, k-NG, 1] = flux_temp[1] * Area
+        Fx[i-NG+1, j-NG, k-NG, 2] = flux_temp[2] * Area
+        Fx[i-NG+1, j-NG, k-NG, 3] = flux_temp[3] * Area
+        Fx[i-NG+1, j-NG, k-NG, 4] = flux_temp[4] * Area
+        Fx[i-NG+1, j-NG, k-NG, 5] = flux_temp[5] * Area
+    end
+    return 
 end
 
 function Eigen_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
@@ -253,214 +237,208 @@ function Eigen_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
     
-    # 边界检查：注意这里主要防止 j 方向越界
+    # 1. 边界检查
     if i > Nxp+NG || j > Nyp+NG || k > Nzp+NG || i < NG+1 || j < NG || k < NG+1
         return
     end
-    
-    @inbounds nx::Float32 = (dηdx[i, j, k] + dηdx[i, j+1, k]) * 0.5f0
-    @inbounds ny::Float32 = (dηdy[i, j, k] + dηdy[i, j+1, k]) * 0.5f0
-    @inbounds nz::Float32 = (dηdz[i, j, k] + dηdz[i, j+1, k]) * 0.5f0
-    @inbounds inv_len = 1.0f0 / sqrt(nx*nx + ny*ny + nz*nz + 1e-12f0)
+
+    # 2. 几何计算 (使用 dη, j方向平均)
+    @inbounds nx = (dηdx[i, j, k] + dηdx[i, j+1, k]) * 0.5f0
+    @inbounds ny = (dηdy[i, j, k] + dηdy[i, j+1, k]) * 0.5f0
+    @inbounds nz = (dηdz[i, j, k] + dηdz[i, j+1, k]) * 0.5f0
+    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-12)
+    @inbounds inv_len = 1.0f0 / Area
     @inbounds nx *= inv_len
     @inbounds ny *= inv_len
     @inbounds nz *= inv_len
 
-    # ==========================================
-    # 1. Load Stencil (J-direction shift)
-    # ==========================================
-    # left state reconstruction at j+1/2
-    @inbounds begin
-        u11 = U[i, j-3, k, 1]; u12 = U[i, j-2, k, 1]; u13 = U[i, j-1, k, 1]; u14 = U[i, j, k, 1]; u15 = U[i, j+1, k, 1]; u16 = U[i, j+2, k, 1]; u17 = U[i, j+3, k, 1]
-        u21 = U[i, j-3, k, 2]; u22 = U[i, j-2, k, 2]; u23 = U[i, j-1, k, 2]; u24 = U[i, j, k, 2]; u25 = U[i, j+1, k, 2]; u26 = U[i, j+2, k, 2]; u27 = U[i, j+3, k, 2]
-        u31 = U[i, j-3, k, 3]; u32 = U[i, j-2, k, 3]; u33 = U[i, j-1, k, 3]; u34 = U[i, j, k, 3]; u35 = U[i, j+1, k, 3]; u36 = U[i, j+2, k, 3]; u37 = U[i, j+3, k, 3]
-        u41 = U[i, j-3, k, 4]; u42 = U[i, j-2, k, 4]; u43 = U[i, j-1, k, 4]; u44 = U[i, j, k, 4]; u45 = U[i, j+1, k, 4]; u46 = U[i, j+2, k, 4]; u47 = U[i, j+3, k, 4]
-        u51 = U[i, j-3, k, 5]; u52 = U[i, j-2, k, 5]; u53 = U[i, j-1, k, 5]; u54 = U[i, j, k, 5]; u55 = U[i, j+1, k, 5]; u56 = U[i, j+2, k, 5]; u57 = U[i, j+3, k, 5]
-    end
-    UL = SMatrix{5,7,Float32}(
-        u11, u21, u31, u41, u51,
-        u12, u22, u32, u42, u52,
-        u13, u23, u33, u43, u53,
-        u14, u24, u34, u44, u54,
-        u15, u25, u35, u45, u55,
-        u16, u26, u36, u46, u56,
-        u17, u27, u37, u47, u57
-    )
+    # 3. 激波传感器 (J 方向)
+    @inbounds ϕx = max(ϕ[i, j-2, k], ϕ[i, j-1, k], ϕ[i, j, k], ϕ[i, j+1, k], ϕ[i, j+2, k], ϕ[i, j+3, k])
 
-    # right state reconstruction at j+1/2 (Mirrored in J)
-    @inbounds begin
-        u11 = U[i, j+4, k, 1]; u12 = U[i, j+3, k, 1]; u13 = U[i, j+2, k, 1]; u14 = U[i, j+1, k, 1]; u15 = U[i, j, k, 1]; u16 = U[i, j-1, k, 1]; u17 = U[i, j-2, k, 1]
-        u21 = U[i, j+4, k, 2]; u22 = U[i, j+3, k, 2]; u23 = U[i, j+2, k, 2]; u24 = U[i, j+1, k, 2]; u25 = U[i, j, k, 2]; u26 = U[i, j-1, k, 2]; u27 = U[i, j-2, k, 2]
-        u31 = U[i, j+4, k, 3]; u32 = U[i, j+3, k, 3]; u33 = U[i, j+2, k, 3]; u34 = U[i, j+1, k, 3]; u35 = U[i, j, k, 3]; u36 = U[i, j-1, k, 3]; u37 = U[i, j-2, k, 3]
-        u41 = U[i, j+4, k, 4]; u42 = U[i, j+3, k, 4]; u43 = U[i, j+2, k, 4]; u44 = U[i, j+1, k, 4]; u45 = U[i, j, k, 4]; u46 = U[i, j-1, k, 4]; u47 = U[i, j-2, k, 4]
-        u51 = U[i, j+4, k, 5]; u52 = U[i, j+3, k, 5]; u53 = U[i, j+2, k, 5]; u54 = U[i, j+1, k, 5]; u55 = U[i, j, k, 5]; u56 = U[i, j-1, k, 5]; u57 = U[i, j-2, k, 5]
-    end
-    UR = SMatrix{5,7,Float32}(
-        u11, u21, u31, u41, u51,
-        u12, u22, u32, u42, u52,
-        u13, u23, u33, u43, u53,
-        u14, u24, u34, u44, u54,
-        u15, u25, u35, u45, u55,
-        u16, u26, u36, u46, u56,
-        u17, u27, u37, u47, u57
-    )
-    UL_interp = MVector{5,Float32}(undef)
-    UR_interp = MVector{5,Float32}(undef)
+    # 准备最终累加变量
+    UL_final_1 = 0.0f0; UL_final_2 = 0.0f0; UL_final_3 = 0.0f0; UL_final_4 = 0.0f0; UL_final_5 = 0.0f0
+    UR_final_1 = 0.0f0; UR_final_2 = 0.0f0; UR_final_3 = 0.0f0; UR_final_4 = 0.0f0; UR_final_5 = 0.0f0
 
-    # Jameson sensor (J-direction)
-    @inbounds ϕx = max(ϕ[i, j-2, k], 
-                       ϕ[i, j-1, k], 
-                       ϕ[i, j  , k], 
-                       ϕ[i, j+1, k], 
-                       ϕ[i, j+2, k], 
-                       ϕ[i, j+3, k])
-    
-    if ϕx < hybrid_ϕ1   # smooth region
-        c_vec = SVector{7,Float32}(Linear[1], Linear[2], Linear[3], Linear[4], Linear[5], Linear[6], Linear[7])
-        UL_interp .= UL * c_vec
-        UR_interp .= UR * c_vec
-    else # discontinuous region
-        
-        # ==========================================
-        # 2. Geometry at j+1/2
-        # ==========================================
+    # ==============================
+    # 分支 A: 光滑区 (极速模式)
+    # ==============================
+    if ϕx < hybrid_ϕ1
+        for n = 1:5
+            # Load Stencil along J
+            @inbounds v1 = U[i,j-3,k,n]; v2 = U[i,j-2,k,n]; v3 = U[i,j-1,k,n]
+            @inbounds v4 = U[i,j  ,k,n]; v5 = U[i,j+1,k,n]; v6 = U[i,j+2,k,n]; v7 = U[i,j+3,k,n]
+            
+            valL = Linear[1]*v1 + Linear[2]*v2 + Linear[3]*v3 + Linear[4]*v4 + Linear[5]*v5 + Linear[6]*v6 + Linear[7]*v7
+            
+            # Right State (Mirror in J)
+            @inbounds r1 = U[i,j+4,k,n]; r2 = U[i,j+3,k,n]; r3 = U[i,j+2,k,n]
+            @inbounds r4 = U[i,j+1,k,n]; r5 = U[i,j  ,k,n]; r6 = U[i,j-1,k,n]; r7 = U[i,j-2,k,n]
+            
+            valR = Linear[1]*r1 + Linear[2]*r2 + Linear[3]*r3 + Linear[4]*r4 + Linear[5]*r5 + Linear[6]*r6 + Linear[7]*r7
 
-        # Tangent vectors construction
-        @inbounds if abs(nz) <= abs(ny)
-            @inbounds den::Float32 = sqrt(nx*nx + ny*ny + 1e-12f0)
-            @inbounds lx::Float32 = -ny / den
-            @inbounds ly::Float32 =  nx / den
-            @inbounds lz::Float32 =  0.0f0
-        else
-            @inbounds den::Float32 = sqrt(nx*nx + nz*nz + 1e-12f0)
-            @inbounds lx::Float32 = -nz / den
-            @inbounds ly::Float32 =  0.0f0
-            @inbounds lz::Float32 =  nx / den
+            if n==1; UL_final_1=valL; UR_final_1=valR
+            elseif n==2; UL_final_2=valL; UR_final_2=valR
+            elseif n==3; UL_final_3=valL; UR_final_3=valR
+            elseif n==4; UL_final_4=valL; UR_final_4=valR
+            else; UL_final_5=valL; UR_final_5=valR; end
         end
-        @inbounds mx::Float32 = ny * lz - nz * ly
-        @inbounds my::Float32 = nz * lx - nx * lz
-        @inbounds mz::Float32 = nx * ly - ny * lx
 
-        # ==========================================
-        # 3. Roe Averages at j+1/2
-        # ==========================================
+    # ==============================
+    # 分支 B: 间断区
+    # ==============================
+    else 
+        # Roe Averages (J direction: j and j+1)
         @inbounds ρ = sqrt(Q[i, j, k, 1] * Q[i, j+1, k, 1])
         @inbounds u = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 2] + sqrt(Q[i, j+1, k, 1]) * Q[i, j+1, k, 2]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i, j+1, k, 1]))
         @inbounds v = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 3] + sqrt(Q[i, j+1, k, 1]) * Q[i, j+1, k, 3]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i, j+1, k, 1]))
         @inbounds w = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 4] + sqrt(Q[i, j+1, k, 1]) * Q[i, j+1, k, 4]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i, j+1, k, 1]))
-        @inbounds HL = γ/(γ-1f0)*Q[i, j, k, 5]/Q[i, j, k, 1] + 0.5f0*(Q[i, j, k, 2]^2 + Q[i, j, k, 3]^2 + Q[i, j, k, 4]^2)
-        @inbounds HR = γ/(γ-1f0)*Q[i, j+1, k, 5]/Q[i, j+1, k, 1] + 0.5f0*(Q[i, j+1, k, 2]^2 + Q[i, j+1, k, 3]^2 + Q[i, j+1, k, 4]^2)
+        @inbounds HL = γ/(γ-1.0f0)*Q[i, j, k, 5]/Q[i, j, k, 1] + 0.5f0*(Q[i, j, k, 2]^2 + Q[i, j, k, 3]^2 + Q[i, j, k, 4]^2)
+        @inbounds HR = γ/(γ-1.0f0)*Q[i, j+1, k, 5]/Q[i, j+1, k, 1] + 0.5f0*(Q[i, j+1, k, 2]^2 + Q[i, j+1, k, 3]^2 + Q[i, j+1, k, 4]^2)
         @inbounds H = (sqrt(Q[i, j, k, 1]) * HL + sqrt(Q[i, j+1, k, 1]) * HR) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i, j+1, k, 1]))
-        @inbounds v2 = 0.5f0*(u^2 + v^2 + w^2)
-        @inbounds c = sqrt((γ-1f0)*(H - v2))
-        @inbounds un = u*nx + v*ny + w*nz
-        @inbounds ul = u*lx + v*ly + w*lz
-        @inbounds um = u*mx + v*my + w*mz
-        @inbounds K = γ-1f0
-
-        # Eigenmatrices construction (identical structure to I-direction)
-        @inbounds begin
-            invc = 1f0/c; invc2 = invc*invc
-            Ku = K*u*invc2; Kv = K*v*invc2; Kw = K*w*invc2
-            Kv2 = K*v2*invc2; Kc2 = K*invc2
-            un_invc = un*invc; nx_invc = nx*invc; ny_invc = ny*invc; nz_invc = nz*invc
-            half = 0.5f0; mhalf = -0.5f0
+        
+        v2 = 0.5f0*(u^2 + v^2 + w^2)
+        c = sqrt((γ-1.0f0)*(H - v2))
+        
+        # Tangent vectors
+        if abs(nz) <= abs(ny)
+            den = sqrt(nx*nx + ny*ny + 1.0f-12); lx = -ny / den; ly = nx / den; lz = 0.0f0
+        else
+            den = sqrt(nx*nx + nz*nz + 1.0f-12); lx = -nz / den; ly = 0.0f0; lz = nx / den
         end
-        # ... (Ln11 to Rn55 definitions are identical since they depend on nx,ny,nz,u,v,w,c) ...
-        @inbounds Ln11 = half*(Kv2 + un_invc);  Ln12 = mhalf*(Ku + nx_invc); Ln13 = mhalf*(Kv + ny_invc); Ln14 = mhalf*(Kw + nz_invc); Ln15 = half*Kc2
-        @inbounds Ln21 = 1f0 - Kv2;             Ln22 = Ku;                   Ln23 = Kv;                   Ln24 = Kw;                   Ln25 = -Kc2
-        @inbounds Ln31 = half*(Kv2 - un_invc);  Ln32 = mhalf*(Ku - nx_invc); Ln33 = mhalf*(Kv - ny_invc); Ln34 = mhalf*(Kw - nz_invc); Ln35 = half*Kc2
-        @inbounds Ln41 = -ul;                   Ln42 = lx;                   Ln43 = ly;                   Ln44 = lz;                   Ln45 = 0f0
-        @inbounds Ln51 = -um;                   Ln52 = mx;                   Ln53 = my;                   Ln54 = mz;                   Ln55 = 0f0
+        mx = ny * lz - nz * ly; my = nz * lx - nx * lz; mz = nx * ly - ny * lx
 
-        @inbounds Rn11 = 1f0;            Rn12 = 1f0;      Rn13 = 1f0;            Rn14 = 0f0;      Rn15 = 0f0
-        @inbounds Rn21 = u - nx*c;     Rn22 = u;        Rn23 = u + nx*c;     Rn24 = lx;     Rn25 = mx
-        @inbounds Rn31 = v - ny*c;     Rn32 = v;        Rn33 = v + ny*c;     Rn34 = ly;     Rn35 = my
-        @inbounds Rn41 = w - nz*c;     Rn42 = w;        Rn43 = w + nz*c;     Rn44 = lz;     Rn45 = mz
-        @inbounds Rn51 = H - un*c;     Rn52 = v2;       Rn53 = H + un*c;     Rn54 = ul;     Rn55 = um
+        invc = 1.0f0/c; invc2 = invc*invc
+        K = γ - 1.0f0
+        Ku = K*u*invc2; Kv = K*v*invc2; Kw = K*w*invc2
+        Kv2 = K*v2*invc2; Kc2 = K*invc2
+        un = u*nx + v*ny + w*nz; ul = u*lx + v*ly + w*lz; um = u*mx + v*my + w*mz
+        un_invc = un*invc; nx_invc = nx*invc; ny_invc = ny*invc; nz_invc = nz*invc
+        half = 0.5f0; mhalf = -0.5f0
 
-        L = SMatrix{5,5,Float32}(Ln11, Ln21, Ln31, Ln41, Ln51, Ln12, Ln22, Ln32, Ln42, Ln52, Ln13, Ln23, Ln33, Ln43, Ln53, Ln14, Ln24, Ln34, Ln44, Ln54, Ln15, Ln25, Ln35, Ln45, Ln55)
-        R = SMatrix{5,5,Float32}(Rn11, Rn21, Rn31, Rn41, Rn51, Rn12, Rn22, Rn32, Rn42, Rn52, Rn13, Rn23, Rn33, Rn43, Rn53, Rn14, Rn24, Rn34, Rn44, Rn54, Rn15, Rn25, Rn35, Rn45, Rn55)
-
-        # Constants
-        tmp1 = 1.0f0/12.0f0; tmp2 = 1.0f0/6.0f0; WENOϵ1 = 1e-20; WENOϵ2 = 1f-16
+        WENOϵ1 = 1.0f-10; WENOϵ2 = 1.0f-8
+        tmp1 = 1.0f0/12.0f0; tmp2 = 1.0f0/6.0f0
         @inbounds ss = 2.0f0/(S[i, j+1, k] + S[i, j, k]) # Note: S indices changed
 
-        # Characteristic Decomposition
-        WL = L * UL; WR = L * UR
-        WL_interp = MVector{5,Float32}(undef)
-        WR_interp = MVector{5,Float32}(undef)
+        for n = 1:5
+            # 2a. 左特征向量 L
+            ln1=0.0f0; ln2=0.0f0; ln3=0.0f0; ln4=0.0f0; ln5=0.0f0
+            if n == 1; ln1 = half*(Kv2 + un_invc); ln2 = mhalf*(Ku + nx_invc); ln3 = mhalf*(Kv + ny_invc); ln4 = mhalf*(Kw + nz_invc); ln5 = half*Kc2
+            elseif n == 2; ln1 = 1.0f0 - Kv2; ln2 = Ku; ln3 = Kv; ln4 = Kw; ln5 = -Kc2
+            elseif n == 3; ln1 = half*(Kv2 - un_invc); ln2 = mhalf*(Ku - nx_invc); ln3 = mhalf*(Kv - ny_invc); ln4 = mhalf*(Kw - nz_invc); ln5 = half*Kc2
+            elseif n == 4; ln1 = -ul; ln2 = lx; ln3 = ly; ln4 = lz; ln5 = 0.0f0
+            else; ln1 = -um; ln2 = mx; ln3 = my; ln4 = mz; ln5 = 0.0f0; end
 
-        if ϕx < hybrid_ϕ2   # WENO7
-            for n = 1:NV
-                @inbounds V1L = WL[n, 1]; V1R = WR[n, 1]
-                @inbounds V2L = WL[n, 2]; V2R = WR[n, 2]
-                @inbounds V3L = WL[n, 3]; V3R = WR[n, 3]
-                @inbounds V4L = WL[n, 4]; V4R = WR[n, 4]
-                @inbounds V5L = WL[n, 5]; V5R = WR[n, 5]
-                @inbounds V6L = WL[n, 6]; V6R = WR[n, 6]
-                @inbounds V7L = WL[n, 7]; V7R = WR[n, 7]
+            # 2b. 投影 U -> V (Stencil along J)
+            @inbounds V1L = ln1*U[i,j-3,k,1] + ln2*U[i,j-3,k,2] + ln3*U[i,j-3,k,3] + ln4*U[i,j-3,k,4] + ln5*U[i,j-3,k,5]
+            @inbounds V2L = ln1*U[i,j-2,k,1] + ln2*U[i,j-2,k,2] + ln3*U[i,j-2,k,3] + ln4*U[i,j-2,k,4] + ln5*U[i,j-2,k,5]
+            @inbounds V3L = ln1*U[i,j-1,k,1] + ln2*U[i,j-1,k,2] + ln3*U[i,j-1,k,3] + ln4*U[i,j-1,k,4] + ln5*U[i,j-1,k,5]
+            @inbounds V4L = ln1*U[i,j  ,k,1] + ln2*U[i,j  ,k,2] + ln3*U[i,j  ,k,3] + ln4*U[i,j  ,k,4] + ln5*U[i,j  ,k,5]
+            @inbounds V5L = ln1*U[i,j+1,k,1] + ln2*U[i,j+1,k,2] + ln3*U[i,j+1,k,3] + ln4*U[i,j+1,k,4] + ln5*U[i,j+1,k,5]
+            @inbounds V6L = ln1*U[i,j+2,k,1] + ln2*U[i,j+2,k,2] + ln3*U[i,j+2,k,3] + ln4*U[i,j+2,k,4] + ln5*U[i,j+2,k,5]
+            @inbounds V7L = ln1*U[i,j+3,k,1] + ln2*U[i,j+3,k,2] + ln3*U[i,j+3,k,3] + ln4*U[i,j+3,k,4] + ln5*U[i,j+3,k,5]
 
-                q1L = -3V1L+13V2L-23V3L+25V4L ; q1R = -3V1R+13V2R-23V3R+25V4R
-                q2L = V2L-5V3L+13V4L+3V5L     ; q2R = V2R-5V3R+13V4R+3V5R
-                q3L = -V3L+7V4L+7V5L-V6L      ; q3R = -V3R+7V4R+7V5R-V6R
-                q4L = 3V4L+13V5L-5V6L+V7L     ; q4R = 3V4R+13V5R-5V6R+V7R
+            @inbounds V1R = ln1*U[i,j+4,k,1] + ln2*U[i,j+4,k,2] + ln3*U[i,j+4,k,3] + ln4*U[i,j+4,k,4] + ln5*U[i,j+4,k,5]
+            @inbounds V2R = ln1*U[i,j+3,k,1] + ln2*U[i,j+3,k,2] + ln3*U[i,j+3,k,3] + ln4*U[i,j+3,k,4] + ln5*U[i,j+3,k,5]
+            @inbounds V3R = ln1*U[i,j+2,k,1] + ln2*U[i,j+2,k,2] + ln3*U[i,j+2,k,3] + ln4*U[i,j+2,k,4] + ln5*U[i,j+2,k,5]
+            @inbounds V4R = ln1*U[i,j+1,k,1] + ln2*U[i,j+1,k,2] + ln3*U[i,j+1,k,3] + ln4*U[i,j+1,k,4] + ln5*U[i,j+1,k,5]
+            @inbounds V5R = ln1*U[i,j  ,k,1] + ln2*U[i,j  ,k,2] + ln3*U[i,j  ,k,3] + ln4*U[i,j  ,k,4] + ln5*U[i,j  ,k,5]
+            @inbounds V6R = ln1*U[i,j-1,k,1] + ln2*U[i,j-1,k,2] + ln3*U[i,j-1,k,3] + ln4*U[i,j-1,k,4] + ln5*U[i,j-1,k,5]
+            @inbounds V7R = ln1*U[i,j-2,k,1] + ln2*U[i,j-2,k,2] + ln3*U[i,j-2,k,3] + ln4*U[i,j-2,k,4] + ln5*U[i,j-2,k,5]
 
-                Is1L = V1L*(547V1L - 3882V2L + 4642V3L - 1854V4L) + V2L*(7043V2L -17246V3L + 7042V4L) + V3L*(11003V3L - 9402V4L) + V4L*(2107V4L)
-                Is2L = V2L*(267V2L - 1642V3L + 1602V4L - 494V5L) + V3L*(2843V3L - 5966V4L + 1922V5L) + V4L*(3443V4L - 2522V5L) + V5L*(547V5L)
-                Is3L = V3L*(547V3L - 2522V4L + 1922V5L - 494V6L) + V4L*(3443V4L - 5966V5L + 1602V6L) + V5L*(2843V5L - 1642V6L) + V6L*(267V6L)
-                Is4L = V4L*(2107V4L - 9402V5L + 7042V6L - 1854V7L) + V5L*(11003V5L -17246V6L + 4642V7L) + V6L*(7043V6L - 3882V7L) + V7L*(547V7L)
+            valL = 0.0f0; valR = 0.0f0
 
-                Is1R = V1R*(547V1R - 3882V2R + 4642V3R - 1854V4R) + V2R*(7043V2R -17246V3R + 7042V4R) + V3R*(11003V3R - 9402V4R) + V4R*(2107V4R)
-                Is2R = V2R*(267V2R - 1642V3R + 1602V4R - 494V5R) + V3R*(2843V3R - 5966V4R + 1922V5R) + V4R*(3443V4R - 2522V5R) + V5R*(547V5R)
-                Is3R = V3R*(547V3R - 2522V4R + 1922V5R - 494V6R) + V4R*(3443V4R - 5966V5R + 1602V6R) + V5R*(2843V5R - 1642V6R) + V6R*(267V6R)
-                Is4R = V4R*(2107V4R - 9402V5R + 7042V6R - 1854V7R) + V5R*(11003V5R -17246V6R + 4642V7R) + V6R*(7043V6R - 3882V7R) + V7R*(547V7R)
+            # 2c. WENO Reconstruction (Pure math, identical to i-dir)
+            if ϕx < hybrid_ϕ2 # WENO7
+                q1L = -3.0f0*V1L + 13.0f0*V2L - 23.0f0*V3L + 25.0f0*V4L; q1R = -3.0f0*V1R + 13.0f0*V2R - 23.0f0*V3R + 25.0f0*V4R
+                q2L =  1.0f0*V2L -  5.0f0*V3L + 13.0f0*V4L +  3.0f0*V5L; q2R =  1.0f0*V2R -  5.0f0*V3R + 13.0f0*V4R +  3.0f0*V5R
+                q3L = -1.0f0*V3L +  7.0f0*V4L +  7.0f0*V5L -  1.0f0*V6L; q3R = -1.0f0*V3R +  7.0f0*V4R +  7.0f0*V5R -  1.0f0*V6R
+                q4L =  3.0f0*V4L + 13.0f0*V5L -  5.0f0*V6L +  1.0f0*V7L; q4R =  3.0f0*V4R + 13.0f0*V5R -  5.0f0*V6R +  1.0f0*V7R
 
-                denom = WENOϵ1 + Is1L*ss; α1L = 1.0f0/(denom*denom); denom = WENOϵ1 + Is1R*ss; α1R = 1.0f0/(denom*denom)
-                denom = WENOϵ1 + Is2L*ss; α2L = 12.0f0/(denom*denom); denom = WENOϵ1 + Is2R*ss; α2R = 12.0f0/(denom*denom)
-                denom = WENOϵ1 + Is3L*ss; α3L = 18.0f0/(denom*denom); denom = WENOϵ1 + Is3R*ss; α3R = 18.0f0/(denom*denom)
-                denom = WENOϵ1 + Is4L*ss; α4L = 4.0f0/(denom*denom); denom = WENOϵ1 + Is4R*ss; α4R = 4.0f0/(denom*denom)
+                Is1L = V1L*( 547.0f0*V1L - 3882.0f0*V2L + 4642.0f0*V3L - 1854.0f0*V4L) + V2L*( 7043.0f0*V2L -17246.0f0*V3L + 7042.0f0*V4L) + V3L*(11003.0f0*V3L - 9402.0f0*V4L) + V4L*( 2107.0f0*V4L)
+                Is2L = V2L*( 267.0f0*V2L - 1642.0f0*V3L + 1602.0f0*V4L -  494.0f0*V5L) + V3L*( 2843.0f0*V3L - 5966.0f0*V4L + 1922.0f0*V5L) + V4L*( 3443.0f0*V4L - 2522.0f0*V5L) + V5L*(  547.0f0*V5L)
+                Is3L = V3L*( 547.0f0*V3L - 2522.0f0*V4L + 1922.0f0*V5L -  494.0f0*V6L) + V4L*( 3443.0f0*V4L - 5966.0f0*V5L + 1602.0f0*V6L) + V5L*( 2843.0f0*V5L - 1642.0f0*V6L) + V6L*(  267.0f0*V6L)
+                Is4L = V4L*( 2107.0f0*V4L - 9402.0f0*V5L + 7042.0f0*V6L - 1854.0f0*V7L) + V5L*(11003.0f0*V5L -17246.0f0*V6L + 4642.0f0*V7L) + V6L*( 7043.0f0*V6L - 3882.0f0*V7L) + V7L*(  547.0f0*V7L)
+
+                Is1R = V1R*( 547.0f0*V1R - 3882.0f0*V2R + 4642.0f0*V3R - 1854.0f0*V4R) + V2R*( 7043.0f0*V2R -17246.0f0*V3R + 7042.0f0*V4R) + V3R*(11003.0f0*V3R - 9402.0f0*V4R) + V4R*( 2107.0f0*V4R)
+                Is2R = V2R*( 267.0f0*V2R - 1642.0f0*V3R + 1602.0f0*V4R -  494.0f0*V5R) + V3R*( 2843.0f0*V3R - 5966.0f0*V4R + 1922.0f0*V5R) + V4R*( 3443.0f0*V4R - 2522.0f0*V5R) + V5R*(  547.0f0*V5R)
+                Is3R = V3R*( 547.0f0*V3R - 2522.0f0*V4R + 1922.0f0*V5R -  494.0f0*V6R) + V4R*( 3443.0f0*V4R - 5966.0f0*V5R + 1602.0f0*V6R) + V5R*( 2843.0f0*V5R - 1642.0f0*V6R) + V6R*(  267.0f0*V6R)
+                Is4R = V4R*( 2107.0f0*V4R - 9402.0f0*V5R + 7042.0f0*V6R - 1854.0f0*V7R) + V5R*(11003.0f0*V5R -17246.0f0*V6R + 4642.0f0*V7R) + V6R*( 7043.0f0*V6R - 3882.0f0*V7R) + V7R*(  547.0f0*V7R)
+
+                t_d1L = WENOϵ1 + Is1L*ss; α1L = 1.0f0/(t_d1L * t_d1L); t_d1R = WENOϵ1 + Is1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2L = WENOϵ1 + Is2L*ss; α2L = 12.0f0/(t_d2L * t_d2L); t_d2R = WENOϵ1 + Is2R*ss; α2R = 12.0f0/(t_d2R * t_d2R)
+                t_d3L = WENOϵ1 + Is3L*ss; α3L = 18.0f0/(t_d3L * t_d3L); t_d3R = WENOϵ1 + Is3R*ss; α3R = 18.0f0/(t_d3R * t_d3R)
+                t_d4L = WENOϵ1 + Is4L*ss; α4L = 4.0f0/(t_d4L * t_d4L); t_d4R = WENOϵ1 + Is4R*ss; α4R = 4.0f0/(t_d4R * t_d4R)
 
                 invsumL = 1.0f0/(α1L+α2L+α3L+α4L); invsumR = 1.0f0/(α1R+α2R+α3R+α4R)
-                WL_interp[n] = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
-                WR_interp[n] = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
-            end
-            UL_interp .= R * WL_interp; UR_interp .= R * WR_interp
-
-        elseif ϕx < hybrid_ϕ3   # WENO5
-            for n = 1:NV
-                @inbounds V1L = WL[n, 2]; V1R = WR[n, 2]
-                @inbounds V2L = WL[n, 3]; V2R = WR[n, 3]
-                @inbounds V3L = WL[n, 4]; V3R = WR[n, 4]
-                @inbounds V4L = WL[n, 5]; V4R = WR[n, 5]
-                @inbounds V5L = WL[n, 6]; V5R = WR[n, 6]
-
-                s11L = 13*(V1L-2*V2L+V3L)^2 + 3*(V1L-4*V2L+3*V3L)^2; s11R = 13*(V1R-2*V2R+V3R)^2 + 3*(V1R-4*V2R+3*V3R)^2 
-                s22L = 13*(V2L-2*V3L+V4L)^2 + 3*(V2L-V4L)^2        ; s22R = 13*(V2R-2*V3R+V4R)^2 + 3*(V2R-V4R)^2        
-                s33L = 13*(V3L-2*V4L+V5L)^2 + 3*(3*V3L-4*V4L+V5L)^2; s33R = 13*(V3R-2*V4R+V5R)^2 + 3*(3*V3R-4*V4R+V5R)^2 
-
-                denom = WENOϵ2 + s11L*ss; s11L = 1.0f0/(denom*denom); denom = WENOϵ2 + s11R*ss; s11R = 1.0f0/(denom*denom)
-                denom = WENOϵ2 + s22L*ss; s22L = 6.0f0/(denom*denom); denom = WENOϵ2 + s22R*ss; s22R = 6.0f0/(denom*denom)
-                denom = WENOϵ2 + s33L*ss; s33L = 3.0f0/(denom*denom); denom = WENOϵ2 + s33R*ss; s33R = 3.0f0/(denom*denom)
+                valL = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
+                valR = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
+            
+            elseif ϕx < hybrid_ϕ3 # WENO5
+                # Left Side
+                t1 = V2L - 2.0f0*V3L + V4L; t2 = V2L - 4.0f0*V3L + 3.0f0*V4L; s1L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3L - 2.0f0*V4L + V5L; t2 = V3L - V5L; s2L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4L - 2.0f0*V5L + V6L; t2 = 3.0f0*V4L - 4.0f0*V5L + V6L; s3L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
                 
-                invsumL = 1.0f0/(s11L+s22L+s33L); invsumR = 1.0f0/(s11R+s22R+s33R)
-                v1L = 2*V1L-7*V2L+11*V3L; v1R = 2*V1R-7*V2R+11*V3R
-                v2L = -V2L+5*V3L+2*V4L  ; v2R = -V2R+5*V3R+2*V4R
-                v3L = 2*V3L+5*V4L-V5L   ; v3R = 2*V3R+5*V4R-V5R
-                WL_interp[n] = invsumL*(s11L*v1L+s22L*v2L+s33L*v3L) * tmp2
-                WR_interp[n] = invsumR*(s11R*v1R+s22R*v2R+s33R*v3R) * tmp2
+                t_d1L = WENOϵ2 + s1L*ss; α1L = 1.0f0/(t_d1L * t_d1L)
+                t_d2L = WENOϵ2 + s2L*ss; α2L = 6.0f0/(t_d2L * t_d2L)
+                t_d3L = WENOϵ2 + s3L*ss; α3L = 3.0f0/(t_d3L * t_d3L)
+                invsumL = 1.0f0/(α1L+α2L+α3L)
+
+                v1 = 2.0f0*V2L - 7.0f0*V3L + 11.0f0*V4L
+                v2 = -1.0f0*V3L + 5.0f0*V4L + 2.0f0*V5L
+                v3 = 2.0f0*V4L + 5.0f0*V5L - 1.0f0*V6L
+                valL = invsumL * (α1L*v1 + α2L*v2 + α3L*v3) * tmp2 
+
+                # Right Side
+                t1 = V2R - 2.0f0*V3R + V4R; t2 = V2R - 4.0f0*V3R + 3.0f0*V4R; s1R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3R - 2.0f0*V4R + V5R; t2 = V3R - V5R; s2R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4R - 2.0f0*V5R + V6R; t2 = 3.0f0*V4R - 4.0f0*V5R + V6R; s3R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                t_d1R = WENOϵ2 + s1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2R = WENOϵ2 + s2R*ss; α2R = 6.0f0/(t_d2R * t_d2R)
+                t_d3R = WENOϵ2 + s3R*ss; α3R = 3.0f0/(t_d3R * t_d3R)
+                invsumR = 1.0f0/(α1R+α2R+α3R)
+
+                v1 = 2.0f0*V2R - 7.0f0*V3R + 11.0f0*V4R
+                v2 = -1.0f0*V3R + 5.0f0*V4R + 2.0f0*V5R
+                v3 = 2.0f0*V4R + 5.0f0*V5R - 1.0f0*V6R
+                valR = invsumR * (α1R*v1 + α2R*v2 + α3R*v3) * tmp2
+
+            else # Minmod
+                valL = V4L + 0.5f0*minmod(V4L - V3L, V5L - V4L)
+                valR = V4R - 0.5f0*minmod(V4R - V3R, V4R - V5R)
             end
-            UL_interp .= R * WL_interp; UR_interp .= R * WR_interp
-        else    # Minmod
-            for n = 1:NV
-                @inbounds WL_interp[n] = WL[n, 4] + 0.5f0*minmod(WL[n, 4] - WL[n, 3], WL[n, 5] - WL[n, 4])
-                @inbounds WR_interp[n] = WR[n, 4] - 0.5f0*minmod(WR[n, 3] - WR[n, 4], WR[n, 4] - WR[n, 5])
-            end 
-            UL_interp .= R * WL_interp; UR_interp .= R * WR_interp
+
+            # 2d. 投影回物理空间
+            rn1=0.0f0; rn2=0.0f0; rn3=0.0f0; rn4=0.0f0; rn5=0.0f0
+            if n == 1; rn1=1.0f0; rn2=u-nx*c; rn3=v-ny*c; rn4=w-nz*c; rn5=H-un*c
+            elseif n == 2; rn1=1.0f0; rn2=u; rn3=v; rn4=w; rn5=v2
+            elseif n == 3; rn1=1.0f0; rn2=u+nx*c; rn3=v+ny*c; rn4=w+nz*c; rn5=H+un*c
+            elseif n == 4; rn1=0.0f0; rn2=lx; rn3=ly; rn4=lz; rn5=ul
+            else; rn1=0.0f0; rn2=mx; rn3=my; rn4=mz; rn5=um; end
+            
+            UL_final_1 += rn1 * valL; UR_final_1 += rn1 * valR
+            UL_final_2 += rn2 * valL; UR_final_2 += rn2 * valR
+            UL_final_3 += rn3 * valL; UR_final_3 += rn3 * valR
+            UL_final_4 += rn4 * valL; UR_final_4 += rn4 * valR
+            UL_final_5 += rn5 * valL; UR_final_5 += rn5 * valR
         end
     end
-    Fy[i, j, k, :] = HLLC_Flux(UL_interp, UR_interp, nx, ny, nz)
+
+    # 4. 组装并计算通量
+    UL_vec = SVector{5,Float32}(UL_final_1, UL_final_2, UL_final_3, UL_final_4, UL_final_5)
+    UR_vec = SVector{5,Float32}(UR_final_1, UR_final_2, UR_final_3, UR_final_4, UR_final_5)
     
+    flux_temp = HLLC_Flux(UL_vec, UR_vec, nx, ny, nz)
+
+    @inbounds begin
+        Fy[i-NG, j-NG+1, k-NG, 1] = flux_temp[1] * Area
+        Fy[i-NG, j-NG+1, k-NG, 2] = flux_temp[2] * Area
+        Fy[i-NG, j-NG+1, k-NG, 3] = flux_temp[3] * Area
+        Fy[i-NG, j-NG+1, k-NG, 4] = flux_temp[4] * Area
+        Fy[i-NG, j-NG+1, k-NG, 5] = flux_temp[5] * Area
+    end
+    return
 end
 
 function Eigen_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
@@ -468,214 +446,743 @@ function Eigen_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
     
-    # 边界检查：注意这里主要防止 k 方向越界
+    # k 需要 stencil k-3 和 k+4
     if i > Nxp+NG || j > Nyp+NG || k > Nzp+NG || i < NG+1 || j < NG+1 || k < NG
         return
     end
-    
-    @inbounds nx::Float32 = (dζdx[i, j, k] + dζdx[i, j, k+1]) * 0.5f0
-    @inbounds ny::Float32 = (dζdy[i, j, k] + dζdy[i, j, k+1]) * 0.5f0
-    @inbounds nz::Float32 = (dζdz[i, j, k] + dζdz[i, j, k+1]) * 0.5f0
-    @inbounds inv_len = 1.0f0 / sqrt(nx*nx + ny*ny + nz*nz + 1e-12f0)
+
+    # 2. 几何计算 (使用 dζ, k方向平均)
+    @inbounds nx = (dζdx[i, j, k] + dζdx[i, j, k+1]) * 0.5f0
+    @inbounds ny = (dζdy[i, j, k] + dζdy[i, j, k+1]) * 0.5f0
+    @inbounds nz = (dζdz[i, j, k] + dζdz[i, j, k+1]) * 0.5f0
+    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-12)
+    @inbounds inv_len = 1.0f0 / Area
     @inbounds nx *= inv_len
     @inbounds ny *= inv_len
     @inbounds nz *= inv_len
 
-    # ==========================================
-    # 1. Load Stencil (K-direction shift)
-    # ==========================================
-    # left state reconstruction at k+1/2
-    @inbounds begin
-        u11 = U[i, j, k-3, 1]; u12 = U[i, j, k-2, 1]; u13 = U[i, j, k-1, 1]; u14 = U[i, j, k, 1]; u15 = U[i, j, k+1, 1]; u16 = U[i, j, k+2, 1]; u17 = U[i, j, k+3, 1]
-        u21 = U[i, j, k-3, 2]; u22 = U[i, j, k-2, 2]; u23 = U[i, j, k-1, 2]; u24 = U[i, j, k, 2]; u25 = U[i, j, k+1, 2]; u26 = U[i, j, k+2, 2]; u27 = U[i, j, k+3, 2]
-        u31 = U[i, j, k-3, 3]; u32 = U[i, j, k-2, 3]; u33 = U[i, j, k-1, 3]; u34 = U[i, j, k, 3]; u35 = U[i, j, k+1, 3]; u36 = U[i, j, k+2, 3]; u37 = U[i, j, k+3, 3]
-        u41 = U[i, j, k-3, 4]; u42 = U[i, j, k-2, 4]; u43 = U[i, j, k-1, 4]; u44 = U[i, j, k, 4]; u45 = U[i, j, k+1, 4]; u46 = U[i, j, k+2, 4]; u47 = U[i, j, k+3, 4]
-        u51 = U[i, j, k-3, 5]; u52 = U[i, j, k-2, 5]; u53 = U[i, j, k-1, 5]; u54 = U[i, j, k, 5]; u55 = U[i, j, k+1, 5]; u56 = U[i, j, k+2, 5]; u57 = U[i, j, k+3, 5]
-    end
-    UL = SMatrix{5,7,Float32}(
-        u11, u21, u31, u41, u51,
-        u12, u22, u32, u42, u52,
-        u13, u23, u33, u43, u53,
-        u14, u24, u34, u44, u54,
-        u15, u25, u35, u45, u55,
-        u16, u26, u36, u46, u56,
-        u17, u27, u37, u47, u57
-    )
+    # 3. 激波传感器 (K 方向)
+    @inbounds ϕx = max(ϕ[i, j, k-2], ϕ[i, j, k-1], ϕ[i, j, k], ϕ[i, j, k+1], ϕ[i, j, k+2], ϕ[i, j, k+3])
 
-    # right state reconstruction at k+1/2 (Mirrored in K)
-    @inbounds begin
-        u11 = U[i, j, k+4, 1]; u12 = U[i, j, k+3, 1]; u13 = U[i, j, k+2, 1]; u14 = U[i, j, k+1, 1]; u15 = U[i, j, k, 1]; u16 = U[i, j, k-1, 1]; u17 = U[i, j, k-2, 1]
-        u21 = U[i, j, k+4, 2]; u22 = U[i, j, k+3, 2]; u23 = U[i, j, k+2, 2]; u24 = U[i, j, k+1, 2]; u25 = U[i, j, k, 2]; u26 = U[i, j, k-1, 2]; u27 = U[i, j, k-2, 2]
-        u31 = U[i, j, k+4, 3]; u32 = U[i, j, k+3, 3]; u33 = U[i, j, k+2, 3]; u34 = U[i, j, k+1, 3]; u35 = U[i, j, k, 3]; u36 = U[i, j, k-1, 3]; u37 = U[i, j, k-2, 3]
-        u41 = U[i, j, k+4, 4]; u42 = U[i, j, k+3, 4]; u43 = U[i, j, k+2, 4]; u44 = U[i, j, k+1, 4]; u45 = U[i, j, k, 4]; u46 = U[i, j, k-1, 4]; u47 = U[i, j, k-2, 4]
-        u51 = U[i, j, k+4, 5]; u52 = U[i, j, k+3, 5]; u53 = U[i, j, k+2, 5]; u54 = U[i, j, k+1, 5]; u55 = U[i, j, k, 5]; u56 = U[i, j, k-1, 5]; u57 = U[i, j, k-2, 5]
-    end
-    UR = SMatrix{5,7,Float32}(
-        u11, u21, u31, u41, u51,
-        u12, u22, u32, u42, u52,
-        u13, u23, u33, u43, u53,
-        u14, u24, u34, u44, u54,
-        u15, u25, u35, u45, u55,
-        u16, u26, u36, u46, u56,
-        u17, u27, u37, u47, u57
-    )
-    UL_interp = MVector{5,Float32}(undef)
-    UR_interp = MVector{5,Float32}(undef)
+    # 准备最终累加变量
+    UL_final_1 = 0.0f0; UL_final_2 = 0.0f0; UL_final_3 = 0.0f0; UL_final_4 = 0.0f0; UL_final_5 = 0.0f0
+    UR_final_1 = 0.0f0; UR_final_2 = 0.0f0; UR_final_3 = 0.0f0; UR_final_4 = 0.0f0; UR_final_5 = 0.0f0
 
-    # Jameson sensor (K-direction)
-    @inbounds ϕx = max(ϕ[i, j, k-2], 
-                       ϕ[i, j, k-1], 
-                       ϕ[i, j, k  ], 
-                       ϕ[i, j, k+1], 
-                       ϕ[i, j, k+2], 
-                       ϕ[i, j, k+3])
-    
-    if ϕx < hybrid_ϕ1   # smooth region
-        c_vec = SVector{7,Float32}(Linear[1], Linear[2], Linear[3], Linear[4], Linear[5], Linear[6], Linear[7])
-        UL_interp .= UL * c_vec
-        UR_interp .= UR * c_vec
-    else # discontinuous region
-        
-        # ==========================================
-        # 2. Geometry at k+1/2
-        # ==========================================
+    # ==============================
+    # 分支 A: 光滑区
+    # ==============================
+    if ϕx < hybrid_ϕ1
+        for n = 1:5
+            # Load Stencil along K
+            @inbounds v1 = U[i,j,k-3,n]; v2 = U[i,j,k-2,n]; v3 = U[i,j,k-1,n]
+            @inbounds v4 = U[i,j,k  ,n]; v5 = U[i,j,k+1,n]; v6 = U[i,j,k+2,n]; v7 = U[i,j,k+3,n]
+            
+            valL = Linear[1]*v1 + Linear[2]*v2 + Linear[3]*v3 + Linear[4]*v4 + Linear[5]*v5 + Linear[6]*v6 + Linear[7]*v7
+            
+            # Right State (Mirror in K)
+            @inbounds r1 = U[i,j,k+4,n]; r2 = U[i,j,k+3,n]; r3 = U[i,j,k+2,n]
+            @inbounds r4 = U[i,j,k+1,n]; r5 = U[i,j,k  ,n]; r6 = U[i,j,k-1,n]; r7 = U[i,j,k-2,n]
+            
+            valR = Linear[1]*r1 + Linear[2]*r2 + Linear[3]*r3 + Linear[4]*r4 + Linear[5]*r5 + Linear[6]*r6 + Linear[7]*r7
 
-        # Tangent vectors construction
-        @inbounds if abs(nz) <= abs(ny)
-            @inbounds den::Float32 = sqrt(nx*nx + ny*ny + 1e-12f0)
-            @inbounds lx::Float32 = -ny / den
-            @inbounds ly::Float32 =  nx / den
-            @inbounds lz::Float32 =  0.0f0
-        else
-            @inbounds den::Float32 = sqrt(nx*nx + nz*nz + 1e-12f0)
-            @inbounds lx::Float32 = -nz / den
-            @inbounds ly::Float32 =  0.0f0
-            @inbounds lz::Float32 =  nx / den
+            if n==1; UL_final_1=valL; UR_final_1=valR
+            elseif n==2; UL_final_2=valL; UR_final_2=valR
+            elseif n==3; UL_final_3=valL; UR_final_3=valR
+            elseif n==4; UL_final_4=valL; UR_final_4=valR
+            else; UL_final_5=valL; UR_final_5=valR; end
         end
-        @inbounds mx::Float32 = ny * lz - nz * ly
-        @inbounds my::Float32 = nz * lx - nx * lz
-        @inbounds mz::Float32 = nx * ly - ny * lx
 
-        # ==========================================
-        # 3. Roe Averages at k+1/2
-        # ==========================================
+    # ==============================
+    # 分支 B: 间断区
+    # ==============================
+    else 
+        # Roe Averages (K direction: k and k+1)
         @inbounds ρ = sqrt(Q[i, j, k, 1] * Q[i, j, k+1, 1])
         @inbounds u = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 2] + sqrt(Q[i, j, k+1, 1]) * Q[i, j, k+1, 2]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i, j, k+1, 1]))
         @inbounds v = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 3] + sqrt(Q[i, j, k+1, 1]) * Q[i, j, k+1, 3]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i, j, k+1, 1]))
         @inbounds w = (sqrt(Q[i, j, k, 1]) * Q[i, j, k, 4] + sqrt(Q[i, j, k+1, 1]) * Q[i, j, k+1, 4]) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i, j, k+1, 1]))
-        @inbounds HL = γ/(γ-1f0)*Q[i, j, k, 5]/Q[i, j, k, 1] + 0.5f0*(Q[i, j, k, 2]^2 + Q[i, j, k, 3]^2 + Q[i, j, k, 4]^2)
-        @inbounds HR = γ/(γ-1f0)*Q[i, j, k+1, 5]/Q[i, j, k+1, 1] + 0.5f0*(Q[i, j, k+1, 2]^2 + Q[i, j, k+1, 3]^2 + Q[i, j, k+1, 4]^2)
+        @inbounds HL = γ/(γ-1.0f0)*Q[i, j, k, 5]/Q[i, j, k, 1] + 0.5f0*(Q[i, j, k, 2]^2 + Q[i, j, k, 3]^2 + Q[i, j, k, 4]^2)
+        @inbounds HR = γ/(γ-1.0f0)*Q[i, j, k+1, 5]/Q[i, j, k+1, 1] + 0.5f0*(Q[i, j, k+1, 2]^2 + Q[i, j, k+1, 3]^2 + Q[i, j, k+1, 4]^2)
         @inbounds H = (sqrt(Q[i, j, k, 1]) * HL + sqrt(Q[i, j, k+1, 1]) * HR) / (sqrt(Q[i, j, k, 1]) + sqrt(Q[i, j, k+1, 1]))
-        @inbounds v2 = 0.5f0*(u^2 + v^2 + w^2)
-        @inbounds c = sqrt((γ-1f0)*(H - v2))
-        @inbounds un = u*nx + v*ny + w*nz
-        @inbounds ul = u*lx + v*ly + w*lz
-        @inbounds um = u*mx + v*my + w*mz
-        @inbounds K = γ-1f0
-
-        # Eigenmatrices construction
-        @inbounds begin
-            invc = 1f0/c; invc2 = invc*invc
-            Ku = K*u*invc2; Kv = K*v*invc2; Kw = K*w*invc2
-            Kv2 = K*v2*invc2; Kc2 = K*invc2
-            un_invc = un*invc; nx_invc = nx*invc; ny_invc = ny*invc; nz_invc = nz*invc
-            half = 0.5f0; mhalf = -0.5f0
+        
+        v2 = 0.5f0*(u^2 + v^2 + w^2)
+        c = sqrt((γ-1.0f0)*(H - v2))
+        
+        # Tangent vectors
+        if abs(nz) <= abs(ny)
+            den = sqrt(nx*nx + ny*ny + 1.0f-12); lx = -ny / den; ly = nx / den; lz = 0.0f0
+        else
+            den = sqrt(nx*nx + nz*nz + 1.0f-12); lx = -nz / den; ly = 0.0f0; lz = nx / den
         end
-        # ... (Ln11 to Rn55 definitions are identical) ...
-        @inbounds Ln11 = half*(Kv2 + un_invc);  Ln12 = mhalf*(Ku + nx_invc); Ln13 = mhalf*(Kv + ny_invc); Ln14 = mhalf*(Kw + nz_invc); Ln15 = half*Kc2
-        @inbounds Ln21 = 1f0 - Kv2;             Ln22 = Ku;                   Ln23 = Kv;                   Ln24 = Kw;                   Ln25 = -Kc2
-        @inbounds Ln31 = half*(Kv2 - un_invc);  Ln32 = mhalf*(Ku - nx_invc); Ln33 = mhalf*(Kv - ny_invc); Ln34 = mhalf*(Kw - nz_invc); Ln35 = half*Kc2
-        @inbounds Ln41 = -ul;                   Ln42 = lx;                   Ln43 = ly;                   Ln44 = lz;                   Ln45 = 0f0
-        @inbounds Ln51 = -um;                   Ln52 = mx;                   Ln53 = my;                   Ln54 = mz;                   Ln55 = 0f0
+        mx = ny * lz - nz * ly; my = nz * lx - nx * lz; mz = nx * ly - ny * lx
 
-        @inbounds Rn11 = 1f0;            Rn12 = 1f0;      Rn13 = 1f0;            Rn14 = 0f0;      Rn15 = 0f0
-        @inbounds Rn21 = u - nx*c;     Rn22 = u;        Rn23 = u + nx*c;     Rn24 = lx;     Rn25 = mx
-        @inbounds Rn31 = v - ny*c;     Rn32 = v;        Rn33 = v + ny*c;     Rn34 = ly;     Rn35 = my
-        @inbounds Rn41 = w - nz*c;     Rn42 = w;        Rn43 = w + nz*c;     Rn44 = lz;     Rn45 = mz
-        @inbounds Rn51 = H - un*c;     Rn52 = v2;       Rn53 = H + un*c;     Rn54 = ul;     Rn55 = um
+        invc = 1.0f0/c; invc2 = invc*invc
+        K = γ - 1.0f0
+        Ku = K*u*invc2; Kv = K*v*invc2; Kw = K*w*invc2
+        Kv2 = K*v2*invc2; Kc2 = K*invc2
+        un = u*nx + v*ny + w*nz; ul = u*lx + v*ly + w*lz; um = u*mx + v*my + w*mz
+        un_invc = un*invc; nx_invc = nx*invc; ny_invc = ny*invc; nz_invc = nz*invc
+        half = 0.5f0; mhalf = -0.5f0
 
-        L = SMatrix{5,5,Float32}(Ln11, Ln21, Ln31, Ln41, Ln51, Ln12, Ln22, Ln32, Ln42, Ln52, Ln13, Ln23, Ln33, Ln43, Ln53, Ln14, Ln24, Ln34, Ln44, Ln54, Ln15, Ln25, Ln35, Ln45, Ln55)
-        R = SMatrix{5,5,Float32}(Rn11, Rn21, Rn31, Rn41, Rn51, Rn12, Rn22, Rn32, Rn42, Rn52, Rn13, Rn23, Rn33, Rn43, Rn53, Rn14, Rn24, Rn34, Rn44, Rn54, Rn15, Rn25, Rn35, Rn45, Rn55)
-
-        # Constants
-        tmp1 = 1.0f0/12.0f0; tmp2 = 1.0f0/6.0f0; WENOϵ1 = 1e-20; WENOϵ2 = 1f-16
+        WENOϵ1 = 1.0f-10; WENOϵ2 = 1.0f-8
+        tmp1 = 1.0f0/12.0f0; tmp2 = 1.0f0/6.0f0
         @inbounds ss = 2.0f0/(S[i, j, k+1] + S[i, j, k]) # Note: S indices changed
 
-        # Characteristic Decomposition
-        WL = L * UL; WR = L * UR
-        WL_interp = MVector{5,Float32}(undef)
-        WR_interp = MVector{5,Float32}(undef)
+        for n = 1:5
+            # 2a. 左特征向量 L
+            ln1=0.0f0; ln2=0.0f0; ln3=0.0f0; ln4=0.0f0; ln5=0.0f0
+            if n == 1; ln1 = half*(Kv2 + un_invc); ln2 = mhalf*(Ku + nx_invc); ln3 = mhalf*(Kv + ny_invc); ln4 = mhalf*(Kw + nz_invc); ln5 = half*Kc2
+            elseif n == 2; ln1 = 1.0f0 - Kv2; ln2 = Ku; ln3 = Kv; ln4 = Kw; ln5 = -Kc2
+            elseif n == 3; ln1 = half*(Kv2 - un_invc); ln2 = mhalf*(Ku - nx_invc); ln3 = mhalf*(Kv - ny_invc); ln4 = mhalf*(Kw - nz_invc); ln5 = half*Kc2
+            elseif n == 4; ln1 = -ul; ln2 = lx; ln3 = ly; ln4 = lz; ln5 = 0.0f0
+            else; ln1 = -um; ln2 = mx; ln3 = my; ln4 = mz; ln5 = 0.0f0; end
 
-        if ϕx < hybrid_ϕ2   # WENO7
-            for n = 1:NV
-                @inbounds V1L = WL[n, 1]; V1R = WR[n, 1]
-                @inbounds V2L = WL[n, 2]; V2R = WR[n, 2]
-                @inbounds V3L = WL[n, 3]; V3R = WR[n, 3]
-                @inbounds V4L = WL[n, 4]; V4R = WR[n, 4]
-                @inbounds V5L = WL[n, 5]; V5R = WR[n, 5]
-                @inbounds V6L = WL[n, 6]; V6R = WR[n, 6]
-                @inbounds V7L = WL[n, 7]; V7R = WR[n, 7]
+            # 2b. 投影 U -> V (Stencil along K)
+            @inbounds V1L = ln1*U[i,j,k-3,1] + ln2*U[i,j,k-3,2] + ln3*U[i,j,k-3,3] + ln4*U[i,j,k-3,4] + ln5*U[i,j,k-3,5]
+            @inbounds V2L = ln1*U[i,j,k-2,1] + ln2*U[i,j,k-2,2] + ln3*U[i,j,k-2,3] + ln4*U[i,j,k-2,4] + ln5*U[i,j,k-2,5]
+            @inbounds V3L = ln1*U[i,j,k-1,1] + ln2*U[i,j,k-1,2] + ln3*U[i,j,k-1,3] + ln4*U[i,j,k-1,4] + ln5*U[i,j,k-1,5]
+            @inbounds V4L = ln1*U[i,j,k  ,1] + ln2*U[i,j,k  ,2] + ln3*U[i,j,k  ,3] + ln4*U[i,j,k  ,4] + ln5*U[i,j,k  ,5]
+            @inbounds V5L = ln1*U[i,j,k+1,1] + ln2*U[i,j,k+1,2] + ln3*U[i,j,k+1,3] + ln4*U[i,j,k+1,4] + ln5*U[i,j,k+1,5]
+            @inbounds V6L = ln1*U[i,j,k+2,1] + ln2*U[i,j,k+2,2] + ln3*U[i,j,k+2,3] + ln4*U[i,j,k+2,4] + ln5*U[i,j,k+2,5]
+            @inbounds V7L = ln1*U[i,j,k+3,1] + ln2*U[i,j,k+3,2] + ln3*U[i,j,k+3,3] + ln4*U[i,j,k+3,4] + ln5*U[i,j,k+3,5]
 
-                q1L = -3V1L+13V2L-23V3L+25V4L ; q1R = -3V1R+13V2R-23V3R+25V4R
-                q2L = V2L-5V3L+13V4L+3V5L     ; q2R = V2R-5V3R+13V4R+3V5R
-                q3L = -V3L+7V4L+7V5L-V6L      ; q3R = -V3R+7V4R+7V5R-V6R
-                q4L = 3V4L+13V5L-5V6L+V7L     ; q4R = 3V4R+13V5R-5V6R+V7R
+            @inbounds V1R = ln1*U[i,j,k+4,1] + ln2*U[i,j,k+4,2] + ln3*U[i,j,k+4,3] + ln4*U[i,j,k+4,4] + ln5*U[i,j,k+4,5]
+            @inbounds V2R = ln1*U[i,j,k+3,1] + ln2*U[i,j,k+3,2] + ln3*U[i,j,k+3,3] + ln4*U[i,j,k+3,4] + ln5*U[i,j,k+3,5]
+            @inbounds V3R = ln1*U[i,j,k+2,1] + ln2*U[i,j,k+2,2] + ln3*U[i,j,k+2,3] + ln4*U[i,j,k+2,4] + ln5*U[i,j,k+2,5]
+            @inbounds V4R = ln1*U[i,j,k+1,1] + ln2*U[i,j,k+1,2] + ln3*U[i,j,k+1,3] + ln4*U[i,j,k+1,4] + ln5*U[i,j,k+1,5]
+            @inbounds V5R = ln1*U[i,j,k  ,1] + ln2*U[i,j,k  ,2] + ln3*U[i,j,k  ,3] + ln4*U[i,j,k  ,4] + ln5*U[i,j,k  ,5]
+            @inbounds V6R = ln1*U[i,j,k-1,1] + ln2*U[i,j,k-1,2] + ln3*U[i,j,k-1,3] + ln4*U[i,j,k-1,4] + ln5*U[i,j,k-1,5]
+            @inbounds V7R = ln1*U[i,j,k-2,1] + ln2*U[i,j,k-2,2] + ln3*U[i,j,k-2,3] + ln4*U[i,j,k-2,4] + ln5*U[i,j,k-2,5]
 
-                Is1L = V1L*(547V1L - 3882V2L + 4642V3L - 1854V4L) + V2L*(7043V2L -17246V3L + 7042V4L) + V3L*(11003V3L - 9402V4L) + V4L*(2107V4L)
-                Is2L = V2L*(267V2L - 1642V3L + 1602V4L - 494V5L) + V3L*(2843V3L - 5966V4L + 1922V5L) + V4L*(3443V4L - 2522V5L) + V5L*(547V5L)
-                Is3L = V3L*(547V3L - 2522V4L + 1922V5L - 494V6L) + V4L*(3443V4L - 5966V5L + 1602V6L) + V5L*(2843V5L - 1642V6L) + V6L*(267V6L)
-                Is4L = V4L*(2107V4L - 9402V5L + 7042V6L - 1854V7L) + V5L*(11003V5L -17246V6L + 4642V7L) + V6L*(7043V6L - 3882V7L) + V7L*(547V7L)
+            valL = 0.0f0; valR = 0.0f0
 
-                Is1R = V1R*(547V1R - 3882V2R + 4642V3R - 1854V4R) + V2R*(7043V2R -17246V3R + 7042V4R) + V3R*(11003V3R - 9402V4R) + V4R*(2107V4R)
-                Is2R = V2R*(267V2R - 1642V3R + 1602V4R - 494V5R) + V3R*(2843V3R - 5966V4R + 1922V5R) + V4R*(3443V4R - 2522V5R) + V5R*(547V5R)
-                Is3R = V3R*(547V3R - 2522V4R + 1922V5R - 494V6R) + V4R*(3443V4R - 5966V5R + 1602V6R) + V5R*(2843V5R - 1642V6R) + V6R*(267V6R)
-                Is4R = V4R*(2107V4R - 9402V5R + 7042V6R - 1854V7R) + V5R*(11003V5R -17246V6R + 4642V7R) + V6R*(7043V6R - 3882V7R) + V7R*(547V7R)
+            # 2c. WENO Reconstruction (Pure math, identical to i-dir)
+            if ϕx < hybrid_ϕ2 # WENO7
+                q1L = -3.0f0*V1L + 13.0f0*V2L - 23.0f0*V3L + 25.0f0*V4L; q1R = -3.0f0*V1R + 13.0f0*V2R - 23.0f0*V3R + 25.0f0*V4R
+                q2L =  1.0f0*V2L -  5.0f0*V3L + 13.0f0*V4L +  3.0f0*V5L; q2R =  1.0f0*V2R -  5.0f0*V3R + 13.0f0*V4R +  3.0f0*V5R
+                q3L = -1.0f0*V3L +  7.0f0*V4L +  7.0f0*V5L -  1.0f0*V6L; q3R = -1.0f0*V3R +  7.0f0*V4R +  7.0f0*V5R -  1.0f0*V6R
+                q4L =  3.0f0*V4L + 13.0f0*V5L -  5.0f0*V6L +  1.0f0*V7L; q4R =  3.0f0*V4R + 13.0f0*V5R -  5.0f0*V6R +  1.0f0*V7R
 
-                denom = WENOϵ1 + Is1L*ss; α1L = 1.0f0/(denom*denom); denom = WENOϵ1 + Is1R*ss; α1R = 1.0f0/(denom*denom)
-                denom = WENOϵ1 + Is2L*ss; α2L = 12.0f0/(denom*denom); denom = WENOϵ1 + Is2R*ss; α2R = 12.0f0/(denom*denom)
-                denom = WENOϵ1 + Is3L*ss; α3L = 18.0f0/(denom*denom); denom = WENOϵ1 + Is3R*ss; α3R = 18.0f0/(denom*denom)
-                denom = WENOϵ1 + Is4L*ss; α4L = 4.0f0/(denom*denom); denom = WENOϵ1 + Is4R*ss; α4R = 4.0f0/(denom*denom)
+                Is1L = V1L*( 547.0f0*V1L - 3882.0f0*V2L + 4642.0f0*V3L - 1854.0f0*V4L) + V2L*( 7043.0f0*V2L -17246.0f0*V3L + 7042.0f0*V4L) + V3L*(11003.0f0*V3L - 9402.0f0*V4L) + V4L*( 2107.0f0*V4L)
+                Is2L = V2L*( 267.0f0*V2L - 1642.0f0*V3L + 1602.0f0*V4L -  494.0f0*V5L) + V3L*( 2843.0f0*V3L - 5966.0f0*V4L + 1922.0f0*V5L) + V4L*( 3443.0f0*V4L - 2522.0f0*V5L) + V5L*(  547.0f0*V5L)
+                Is3L = V3L*( 547.0f0*V3L - 2522.0f0*V4L + 1922.0f0*V5L -  494.0f0*V6L) + V4L*( 3443.0f0*V4L - 5966.0f0*V5L + 1602.0f0*V6L) + V5L*( 2843.0f0*V5L - 1642.0f0*V6L) + V6L*(  267.0f0*V6L)
+                Is4L = V4L*( 2107.0f0*V4L - 9402.0f0*V5L + 7042.0f0*V6L - 1854.0f0*V7L) + V5L*(11003.0f0*V5L -17246.0f0*V6L + 4642.0f0*V7L) + V6L*( 7043.0f0*V6L - 3882.0f0*V7L) + V7L*(  547.0f0*V7L)
+
+                Is1R = V1R*( 547.0f0*V1R - 3882.0f0*V2R + 4642.0f0*V3R - 1854.0f0*V4R) + V2R*( 7043.0f0*V2R -17246.0f0*V3R + 7042.0f0*V4R) + V3R*(11003.0f0*V3R - 9402.0f0*V4R) + V4R*( 2107.0f0*V4R)
+                Is2R = V2R*( 267.0f0*V2R - 1642.0f0*V3R + 1602.0f0*V4R -  494.0f0*V5R) + V3R*( 2843.0f0*V3R - 5966.0f0*V4R + 1922.0f0*V5R) + V4R*( 3443.0f0*V4R - 2522.0f0*V5R) + V5R*(  547.0f0*V5R)
+                Is3R = V3R*( 547.0f0*V3R - 2522.0f0*V4R + 1922.0f0*V5R -  494.0f0*V6R) + V4R*( 3443.0f0*V4R - 5966.0f0*V5R + 1602.0f0*V6R) + V5R*( 2843.0f0*V5R - 1642.0f0*V6R) + V6R*(  267.0f0*V6R)
+                Is4R = V4R*( 2107.0f0*V4R - 9402.0f0*V5R + 7042.0f0*V6R - 1854.0f0*V7R) + V5R*(11003.0f0*V5R -17246.0f0*V6R + 4642.0f0*V7R) + V6R*( 7043.0f0*V6R - 3882.0f0*V7R) + V7R*(  547.0f0*V7R)
+
+                t_d1L = WENOϵ1 + Is1L*ss; α1L = 1.0f0/(t_d1L * t_d1L); t_d1R = WENOϵ1 + Is1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2L = WENOϵ1 + Is2L*ss; α2L = 12.0f0/(t_d2L * t_d2L); t_d2R = WENOϵ1 + Is2R*ss; α2R = 12.0f0/(t_d2R * t_d2R)
+                t_d3L = WENOϵ1 + Is3L*ss; α3L = 18.0f0/(t_d3L * t_d3L); t_d3R = WENOϵ1 + Is3R*ss; α3R = 18.0f0/(t_d3R * t_d3R)
+                t_d4L = WENOϵ1 + Is4L*ss; α4L = 4.0f0/(t_d4L * t_d4L); t_d4R = WENOϵ1 + Is4R*ss; α4R = 4.0f0/(t_d4R * t_d4R)
 
                 invsumL = 1.0f0/(α1L+α2L+α3L+α4L); invsumR = 1.0f0/(α1R+α2R+α3R+α4R)
-                WL_interp[n] = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
-                WR_interp[n] = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
-            end
-            UL_interp .= R * WL_interp; UR_interp .= R * WR_interp
-
-        elseif ϕx < hybrid_ϕ3   # WENO5
-            for n = 1:NV
-                @inbounds V1L = WL[n, 2]; V1R = WR[n, 2]
-                @inbounds V2L = WL[n, 3]; V2R = WR[n, 3]
-                @inbounds V3L = WL[n, 4]; V3R = WR[n, 4]
-                @inbounds V4L = WL[n, 5]; V4R = WR[n, 5]
-                @inbounds V5L = WL[n, 6]; V5R = WR[n, 6]
-
-                s11L = 13*(V1L-2*V2L+V3L)^2 + 3*(V1L-4*V2L+3*V3L)^2; s11R = 13*(V1R-2*V2R+V3R)^2 + 3*(V1R-4*V2R+3*V3R)^2 
-                s22L = 13*(V2L-2*V3L+V4L)^2 + 3*(V2L-V4L)^2        ; s22R = 13*(V2R-2*V3R+V4R)^2 + 3*(V2R-V4R)^2        
-                s33L = 13*(V3L-2*V4L+V5L)^2 + 3*(3*V3L-4*V4L+V5L)^2; s33R = 13*(V3R-2*V4R+V5R)^2 + 3*(3*V3R-4*V4R+V5R)^2 
-
-                denom = WENOϵ2 + s11L*ss; s11L = 1.0f0/(denom*denom); denom = WENOϵ2 + s11R*ss; s11R = 1.0f0/(denom*denom)
-                denom = WENOϵ2 + s22L*ss; s22L = 6.0f0/(denom*denom); denom = WENOϵ2 + s22R*ss; s22R = 6.0f0/(denom*denom)
-                denom = WENOϵ2 + s33L*ss; s33L = 3.0f0/(denom*denom); denom = WENOϵ2 + s33R*ss; s33R = 3.0f0/(denom*denom)
+                valL = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
+                valR = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
+            
+            elseif ϕx < hybrid_ϕ3 # WENO5
+                # Left Side
+                t1 = V2L - 2.0f0*V3L + V4L; t2 = V2L - 4.0f0*V3L + 3.0f0*V4L; s1L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3L - 2.0f0*V4L + V5L; t2 = V3L - V5L; s2L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4L - 2.0f0*V5L + V6L; t2 = 3.0f0*V4L - 4.0f0*V5L + V6L; s3L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
                 
-                invsumL = 1.0f0/(s11L+s22L+s33L); invsumR = 1.0f0/(s11R+s22R+s33R)
-                v1L = 2*V1L-7*V2L+11*V3L; v1R = 2*V1R-7*V2R+11*V3R
-                v2L = -V2L+5*V3L+2*V4L  ; v2R = -V2R+5*V3R+2*V4R
-                v3L = 2*V3L+5*V4L-V5L   ; v3R = 2*V3R+5*V4R-V5R
-                WL_interp[n] = invsumL*(s11L*v1L+s22L*v2L+s33L*v3L) * tmp2
-                WR_interp[n] = invsumR*(s11R*v1R+s22R*v2R+s33R*v3R) * tmp2
+                t_d1L = WENOϵ2 + s1L*ss; α1L = 1.0f0/(t_d1L * t_d1L)
+                t_d2L = WENOϵ2 + s2L*ss; α2L = 6.0f0/(t_d2L * t_d2L)
+                t_d3L = WENOϵ2 + s3L*ss; α3L = 3.0f0/(t_d3L * t_d3L)
+                invsumL = 1.0f0/(α1L+α2L+α3L)
+
+                v1 = 2.0f0*V2L - 7.0f0*V3L + 11.0f0*V4L
+                v2 = -1.0f0*V3L + 5.0f0*V4L + 2.0f0*V5L
+                v3 = 2.0f0*V4L + 5.0f0*V5L - 1.0f0*V6L
+                valL = invsumL * (α1L*v1 + α2L*v2 + α3L*v3) * tmp2 
+
+                # Right Side
+                t1 = V2R - 2.0f0*V3R + V4R; t2 = V2R - 4.0f0*V3R + 3.0f0*V4R; s1R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3R - 2.0f0*V4R + V5R; t2 = V3R - V5R; s2R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4R - 2.0f0*V5R + V6R; t2 = 3.0f0*V4R - 4.0f0*V5R + V6R; s3R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                t_d1R = WENOϵ2 + s1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2R = WENOϵ2 + s2R*ss; α2R = 6.0f0/(t_d2R * t_d2R)
+                t_d3R = WENOϵ2 + s3R*ss; α3R = 3.0f0/(t_d3R * t_d3R)
+                invsumR = 1.0f0/(α1R+α2R+α3R)
+
+                v1 = 2.0f0*V2R - 7.0f0*V3R + 11.0f0*V4R
+                v2 = -1.0f0*V3R + 5.0f0*V4R + 2.0f0*V5R
+                v3 = 2.0f0*V4R + 5.0f0*V5R - 1.0f0*V6R
+                valR = invsumR * (α1R*v1 + α2R*v2 + α3R*v3) * tmp2
+
+            else # Minmod
+                valL = V4L + 0.5f0*minmod(V4L - V3L, V5L - V4L)
+                valR = V4R - 0.5f0*minmod(V4R - V3R, V4R - V5R)
             end
-            UL_interp .= R * WL_interp; UR_interp .= R * WR_interp
-        else    # Minmod
-            for n = 1:NV
-                @inbounds WL_interp[n] = WL[n, 4] + 0.5f0*minmod(WL[n, 4] - WL[n, 3], WL[n, 5] - WL[n, 4])
-                @inbounds WR_interp[n] = WR[n, 4] - 0.5f0*minmod(WR[n, 3] - WR[n, 4], WR[n, 4] - WR[n, 5])
-            end 
-            UL_interp .= R * WL_interp; UR_interp .= R * WR_interp
+
+            # 2d. 投影回物理空间
+            rn1=0.0f0; rn2=0.0f0; rn3=0.0f0; rn4=0.0f0; rn5=0.0f0
+            if n == 1; rn1=1.0f0; rn2=u-nx*c; rn3=v-ny*c; rn4=w-nz*c; rn5=H-un*c
+            elseif n == 2; rn1=1.0f0; rn2=u; rn3=v; rn4=w; rn5=v2
+            elseif n == 3; rn1=1.0f0; rn2=u+nx*c; rn3=v+ny*c; rn4=w+nz*c; rn5=H+un*c
+            elseif n == 4; rn1=0.0f0; rn2=lx; rn3=ly; rn4=lz; rn5=ul
+            else; rn1=0.0f0; rn2=mx; rn3=my; rn4=mz; rn5=um; end
+            
+            UL_final_1 += rn1 * valL; UR_final_1 += rn1 * valR
+            UL_final_2 += rn2 * valL; UR_final_2 += rn2 * valR
+            UL_final_3 += rn3 * valL; UR_final_3 += rn3 * valR
+            UL_final_4 += rn4 * valL; UR_final_4 += rn4 * valR
+            UL_final_5 += rn5 * valL; UR_final_5 += rn5 * valR
         end
     end
-    Fz[i, j, k, :] = HLLC_Flux(UL_interp, UR_interp, nx, ny, nz)
+
+    # 4. 组装并计算通量
+    UL_vec = SVector{5,Float32}(UL_final_1, UL_final_2, UL_final_3, UL_final_4, UL_final_5)
+    UR_vec = SVector{5,Float32}(UR_final_1, UR_final_2, UR_final_3, UR_final_4, UR_final_5)
     
+    flux_temp = HLLC_Flux(UL_vec, UR_vec, nx, ny, nz)
+
+    @inbounds begin
+        # 注意：写入索引 Fz 的维度是 (Nxp, Nyp, Nzp+1, 5)
+        Fz[i-NG, j-NG, k-NG+1, 1] = flux_temp[1] * Area
+        Fz[i-NG, j-NG, k-NG+1, 2] = flux_temp[2] * Area
+        Fz[i-NG, j-NG, k-NG+1, 3] = flux_temp[3] * Area
+        Fz[i-NG, j-NG, k-NG+1, 4] = flux_temp[4] * Area
+        Fz[i-NG, j-NG, k-NG+1, 5] = flux_temp[5] * Area
+    end
+    return
+end
+
+function Conser_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
+    i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
+    j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
+    k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
+    
+    # 1. 边界检查
+    if i > Nxp+NG || j > Nyp+NG || k > Nzp+NG || i < NG || j < NG+1 || k < NG+1
+        return
+    end
+    # 2. 几何计算
+    @inbounds nx = (dξdx[i, j, k] + dξdx[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
+    @inbounds ny = (dξdy[i, j, k] + dξdy[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
+    @inbounds nz = (dξdz[i, j, k] + dξdz[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
+    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
+    @inbounds inv_len = 1.0f0 / Area
+    @inbounds nx *= inv_len
+    @inbounds ny *= inv_len
+    @inbounds nz *= inv_len
+    # @inbounds Area *= INV_SCALE_FACTOR
+    # @cuprintf("nx=%e, ny=%e, nz=%e, Area=%e\n", nx, ny, nz, Area)
+
+    # 3. 激波传感器
+    @inbounds ϕx = max(ϕ[i-2, j, k], ϕ[i-1, j, k], ϕ[i, j, k], ϕ[i+1, j, k], ϕ[i+2, j, k], ϕ[i+3, j, k])
+
+    # 准备最终累加变量
+    UL_final_1 = 0.0f0; UL_final_2 = 0.0f0; UL_final_3 = 0.0f0; UL_final_4 = 0.0f0; UL_final_5 = 0.0f0
+    UR_final_1 = 0.0f0; UR_final_2 = 0.0f0; UR_final_3 = 0.0f0; UR_final_4 = 0.0f0; UR_final_5 = 0.0f0
+
+    # ==============================
+    # 分支 A: 光滑区 (极速模式)
+    # ==============================
+    if ϕx < hybrid_ϕ1
+        for n = 1:5
+            @inbounds v1 = U[i-3,j,k,n]; v2 = U[i-2,j,k,n]; v3 = U[i-1,j,k,n]
+            @inbounds v4 = U[i  ,j,k,n]; v5 = U[i+1,j,k,n]; v6 = U[i+2,j,k,n]; v7 = U[i+3,j,k,n]
+            
+            valL = Linear[1]*v1 + Linear[2]*v2 + Linear[3]*v3 + Linear[4]*v4 + Linear[5]*v5 + Linear[6]*v6 + Linear[7]*v7
+            
+            @inbounds r1 = U[i+4,j,k,n]; r2 = U[i+3,j,k,n]; r3 = U[i+2,j,k,n]
+            @inbounds r4 = U[i+1,j,k,n]; r5 = U[i  ,j,k,n]; r6 = U[i-1,j,k,n]; r7 = U[i-2,j,k,n]
+            
+            valR = Linear[1]*r1 + Linear[2]*r2 + Linear[3]*r3 + Linear[4]*r4 + Linear[5]*r5 + Linear[6]*r6 + Linear[7]*r7
+
+            if n==1; UL_final_1=valL; UR_final_1=valR
+            elseif n==2; UL_final_2=valL; UR_final_2=valR
+            elseif n==3; UL_final_3=valL; UR_final_3=valR
+            elseif n==4; UL_final_4=valL; UR_final_4=valR
+            else; UL_final_5=valL; UR_final_5=valR; end
+        end
+
+    # ==============================
+    # 分支 B: 间断区 (特征分解模式)
+    # ==============================
+    else 
+        WENOϵ1 = 1.0f-10; WENOϵ2 = 1.0f-8
+        tmp1 = 1.0f0/12.0f0; tmp2 = 1.0f0/6.0f0
+        @inbounds ss = 2.0f0/(S[i+1, j, k] + S[i, j, k])
+
+        for n = 1:5
+
+            # 2b. 投影 U -> V (Component-wise Reconstruction)
+            @inbounds V1L = U[i-3,j,k,n]
+            @inbounds V2L = U[i-2,j,k,n]
+            @inbounds V3L = U[i-1,j,k,n]
+            @inbounds V4L = U[i  ,j,k,n]
+            @inbounds V5L = U[i+1,j,k,n]
+            @inbounds V6L = U[i+2,j,k,n]
+            @inbounds V7L = U[i+3,j,k,n]
+
+            @inbounds V1R = U[i+4,j,k,n]
+            @inbounds V2R = U[i+3,j,k,n]
+            @inbounds V3R = U[i+2,j,k,n]
+            @inbounds V4R = U[i+1,j,k,n]
+            @inbounds V5R = U[i  ,j,k,n]
+            @inbounds V6R = U[i-1,j,k,n]
+            @inbounds V7R = U[i-2,j,k,n]
+
+            valL = 0.0f0; valR = 0.0f0
+
+            # 2c. WENO Reconstruction
+            if ϕx < hybrid_ϕ2 # WENO7
+                q1L = -3.0f0*V1L + 13.0f0*V2L - 23.0f0*V3L + 25.0f0*V4L; q1R = -3.0f0*V1R + 13.0f0*V2R - 23.0f0*V3R + 25.0f0*V4R
+                q2L =  1.0f0*V2L -  5.0f0*V3L + 13.0f0*V4L +  3.0f0*V5L; q2R =  1.0f0*V2R -  5.0f0*V3R + 13.0f0*V4R +  3.0f0*V5R
+                q3L = -1.0f0*V3L +  7.0f0*V4L +  7.0f0*V5L -  1.0f0*V6L; q3R = -1.0f0*V3R +  7.0f0*V4R +  7.0f0*V5R -  1.0f0*V6R
+                q4L =  3.0f0*V4L + 13.0f0*V5L -  5.0f0*V6L +  1.0f0*V7L; q4R =  3.0f0*V4R + 13.0f0*V5R -  5.0f0*V6R +  1.0f0*V7R
+
+                Is1L = V1L*( 547.0f0*V1L - 3882.0f0*V2L + 4642.0f0*V3L - 1854.0f0*V4L) + V2L*( 7043.0f0*V2L -17246.0f0*V3L + 7042.0f0*V4L) + V3L*(11003.0f0*V3L - 9402.0f0*V4L) + V4L*( 2107.0f0*V4L)
+                Is2L = V2L*( 267.0f0*V2L - 1642.0f0*V3L + 1602.0f0*V4L -  494.0f0*V5L) + V3L*( 2843.0f0*V3L - 5966.0f0*V4L + 1922.0f0*V5L) + V4L*( 3443.0f0*V4L - 2522.0f0*V5L) + V5L*(  547.0f0*V5L)
+                Is3L = V3L*( 547.0f0*V3L - 2522.0f0*V4L + 1922.0f0*V5L -  494.0f0*V6L) + V4L*( 3443.0f0*V4L - 5966.0f0*V5L + 1602.0f0*V6L) + V5L*( 2843.0f0*V5L - 1642.0f0*V6L) + V6L*(  267.0f0*V6L)
+                Is4L = V4L*( 2107.0f0*V4L - 9402.0f0*V5L + 7042.0f0*V6L - 1854.0f0*V7L) + V5L*(11003.0f0*V5L -17246.0f0*V6L + 4642.0f0*V7L) + V6L*( 7043.0f0*V6L - 3882.0f0*V7L) + V7L*(  547.0f0*V7L)
+
+                Is1R = V1R*( 547.0f0*V1R - 3882.0f0*V2R + 4642.0f0*V3R - 1854.0f0*V4R) + V2R*( 7043.0f0*V2R -17246.0f0*V3R + 7042.0f0*V4R) + V3R*(11003.0f0*V3R - 9402.0f0*V4R) + V4R*( 2107.0f0*V4R)
+                Is2R = V2R*( 267.0f0*V2R - 1642.0f0*V3R + 1602.0f0*V4R -  494.0f0*V5R) + V3R*( 2843.0f0*V3R - 5966.0f0*V4R + 1922.0f0*V5R) + V4R*( 3443.0f0*V4R - 2522.0f0*V5R) + V5R*(  547.0f0*V5R)
+                Is3R = V3R*( 547.0f0*V3R - 2522.0f0*V4R + 1922.0f0*V5R -  494.0f0*V6R) + V4R*( 3443.0f0*V4R - 5966.0f0*V5R + 1602.0f0*V6R) + V5R*( 2843.0f0*V5R - 1642.0f0*V6R) + V6R*(  267.0f0*V6R)
+                Is4R = V4R*( 2107.0f0*V4R - 9402.0f0*V5R + 7042.0f0*V6R - 1854.0f0*V7R) + V5R*(11003.0f0*V5R -17246.0f0*V6R + 4642.0f0*V7R) + V6R*( 7043.0f0*V6R - 3882.0f0*V7R) + V7R*(  547.0f0*V7R)
+
+                t_d1L = WENOϵ1 + Is1L*ss; α1L = 1.0f0/(t_d1L * t_d1L);  t_d1R = WENOϵ1 + Is1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2L = WENOϵ1 + Is2L*ss; α2L = 12.0f0/(t_d2L * t_d2L); t_d2R = WENOϵ1 + Is2R*ss; α2R = 12.0f0/(t_d2R * t_d2R)
+                t_d3L = WENOϵ1 + Is3L*ss; α3L = 18.0f0/(t_d3L * t_d3L); t_d3R = WENOϵ1 + Is3R*ss; α3R = 18.0f0/(t_d3R * t_d3R)
+                t_d4L = WENOϵ1 + Is4L*ss; α4L = 4.0f0/(t_d4L * t_d4L);  t_d4R = WENOϵ1 + Is4R*ss; α4R = 4.0f0/(t_d4R * t_d4R)
+
+                invsumL = 1.0f0/(α1L+α2L+α3L+α4L); invsumR = 1.0f0/(α1R+α2R+α3R+α4R)
+                valL = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
+                valR = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
+
+                # ... (valL 和 valR 计算完毕) ...
+            
+            # ===  WENO5 分支 ===
+            elseif ϕx < hybrid_ϕ3 # WENO5
+                # 注意：WENO5 只需要 5 个点。
+                # V2L (i-2), V3L (i-1), V4L (i), V5L (i+1), V6L (i+2)
+                # 对应标准 WENO5 的 v1...v5
+                
+                # Left Side
+                # Beta 1: (13/12)(v1-2v2+v3)^2 + (1/4)(v1-4v2+3v3)^2
+                t1 = V2L - 2.0f0*V3L + V4L; t2 = V2L - 4.0f0*V3L + 3.0f0*V4L
+                s1L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                
+                # Beta 2: (13/12)(v2-2v3+v4)^2 + (1/4)(v2-v4)^2
+                t1 = V3L - 2.0f0*V4L + V5L; t2 = V3L - V5L
+                s2L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                
+                # Beta 3: (13/12)(v3-2v4+v5)^2 + (1/4)(3v3-4v4+v5)^2
+                t1 = V4L - 2.0f0*V5L + V6L; t2 = 3.0f0*V4L - 4.0f0*V5L + V6L
+                s3L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                # Weights (d0=1/10, d1=6/10, d2=3/10 -> relative 1, 6, 3)
+                t_d1L = WENOϵ2 + s1L*ss; α1L = 1.0f0/(t_d1L * t_d1L)
+                t_d2L = WENOϵ2 + s2L*ss; α2L = 6.0f0/(t_d2L * t_d2L)
+                t_d3L = WENOϵ2 + s3L*ss; α3L = 3.0f0/(t_d3L * t_d3L)
+                invsumL = 1.0f0/(α1L+α2L+α3L)
+
+                # Candidates
+                v1 = 2.0f0*V2L - 7.0f0*V3L + 11.0f0*V4L
+                v2 = -1.0f0*V3L + 5.0f0*V4L + 2.0f0*V5L
+                v3 = 2.0f0*V4L + 5.0f0*V5L - 1.0f0*V6L
+                
+                valL = invsumL * (α1L*v1 + α2L*v2 + α3L*v3) * tmp2 # tmp2 is 1/6
+
+                # Right Side (Symmetric)
+                # Use V2R...V6R
+                t1 = V2R - 2.0f0*V3R + V4R; t2 = V2R - 4.0f0*V3R + 3.0f0*V4R
+                s1R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3R - 2.0f0*V4R + V5R; t2 = V3R - V5R
+                s2R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4R - 2.0f0*V5R + V6R; t2 = 3.0f0*V4R - 4.0f0*V5R + V6R
+                s3R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                t_d1R = WENOϵ2 + s1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2R = WENOϵ2 + s2R*ss; α2R = 6.0f0/(t_d2R * t_d2R)
+                t_d3R = WENOϵ2 + s3R*ss; α3R = 3.0f0/(t_d3R * t_d3R)
+                invsumR = 1.0f0/(α1R+α2R+α3R)
+
+                v1 = 2.0f0*V2R - 7.0f0*V3R + 11.0f0*V4R
+                v2 = -1.0f0*V3R + 5.0f0*V4R + 2.0f0*V5R
+                v3 = 2.0f0*V4R + 5.0f0*V5R - 1.0f0*V6R
+                
+                valR = invsumR * (α1R*v1 + α2R*v2 + α3R*v3) * tmp2
+
+            else # Minmod
+                valL = V4L + 0.5f0*minmod(V4L - V3L, V5L - V4L)
+                valR = V4R - 0.5f0*minmod(V4R - V3R, V4R - V5R)
+            end
+            
+            if n == 1;      UL_final_1 = valL; UR_final_1 = valR
+            elseif n == 2;  UL_final_2 = valL; UR_final_2 = valR
+            elseif n == 3;  UL_final_3 = valL; UR_final_3 = valR
+            elseif n == 4;  UL_final_4 = valL; UR_final_4 = valR
+            else;           UL_final_5 = valL; UR_final_5 = valR
+            end
+        end
+    end
+
+    # 4. 组装并计算通量
+    UL_vec = SVector{5,Float32}(UL_final_1, UL_final_2, UL_final_3, UL_final_4, UL_final_5)
+    UR_vec = SVector{5,Float32}(UR_final_1, UR_final_2, UR_final_3, UR_final_4, UR_final_5)
+    
+    flux_temp = HLLC_Flux(UL_vec, UR_vec, nx, ny, nz)
+
+    @inbounds begin
+        Fx[i-NG+1, j-NG, k-NG, 1] = flux_temp[1] * Area
+        Fx[i-NG+1, j-NG, k-NG, 2] = flux_temp[2] * Area
+        Fx[i-NG+1, j-NG, k-NG, 3] = flux_temp[3] * Area
+        Fx[i-NG+1, j-NG, k-NG, 4] = flux_temp[4] * Area
+        Fx[i-NG+1, j-NG, k-NG, 5] = flux_temp[5] * Area
+    end
+    return 
+end
+
+function Conser_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
+    i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
+    j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
+    k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
+    
+    # 1. 边界检查
+    if i > Nxp+NG || j > Nyp+NG || k > Nzp+NG || i < NG+1 || j < NG || k < NG+1
+        return
+    end
+
+    # 2. 几何计算 (使用 eta 度量项，j 和 j+1 界面)
+    @inbounds nx = (dηdx[i, j, k] + dηdx[i, j+1, k]) * 0.5f0
+    @inbounds ny = (dηdy[i, j, k] + dηdy[i, j+1, k]) * 0.5f0
+    @inbounds nz = (dηdz[i, j, k] + dηdz[i, j+1, k]) * 0.5f0
+    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
+    @inbounds inv_len = 1.0f0 / Area
+    @inbounds nx *= inv_len
+    @inbounds ny *= inv_len
+    @inbounds nz *= inv_len
+
+    # 3. 激波传感器 (沿 j 方向)
+    @inbounds ϕy = max(ϕ[i, j-2, k], ϕ[i, j-1, k], ϕ[i, j, k], ϕ[i, j+1, k], ϕ[i, j+2, k], ϕ[i, j+3, k])
+
+    # 准备最终累加变量
+    UL_final_1 = 0.0f0; UL_final_2 = 0.0f0; UL_final_3 = 0.0f0; UL_final_4 = 0.0f0; UL_final_5 = 0.0f0
+    UR_final_1 = 0.0f0; UR_final_2 = 0.0f0; UR_final_3 = 0.0f0; UR_final_4 = 0.0f0; UR_final_5 = 0.0f0
+
+    # ==============================
+    # 分支 A: 光滑区
+    # ==============================
+    if ϕy < hybrid_ϕ1
+        for n = 1:5
+            # 模版沿 j 方向取值
+            @inbounds v1 = U[i,j-3,k,n]; v2 = U[i,j-2,k,n]; v3 = U[i,j-1,k,n]
+            @inbounds v4 = U[i,j  ,k,n]; v5 = U[i,j+1,k,n]; v6 = U[i,j+2,k,n]; v7 = U[i,j+3,k,n]
+            
+            valL = Linear[1]*v1 + Linear[2]*v2 + Linear[3]*v3 + Linear[4]*v4 + Linear[5]*v5 + Linear[6]*v6 + Linear[7]*v7
+            
+            @inbounds r1 = U[i,j+4,k,n]; r2 = U[i,j+3,k,n]; r3 = U[i,j+2,k,n]
+            @inbounds r4 = U[i,j+1,k,n]; r5 = U[i,j  ,k,n]; r6 = U[i,j-1,k,n]; r7 = U[i,j-2,k,n]
+            
+            valR = Linear[1]*r1 + Linear[2]*r2 + Linear[3]*r3 + Linear[4]*r4 + Linear[5]*r5 + Linear[6]*r6 + Linear[7]*r7
+
+            if n==1;     UL_final_1=valL; UR_final_1=valR
+            elseif n==2; UL_final_2=valL; UR_final_2=valR
+            elseif n==3; UL_final_3=valL; UR_final_3=valR
+            elseif n==4; UL_final_4=valL; UR_final_4=valR
+            else;        UL_final_5=valL; UR_final_5=valR; end
+        end
+
+    # ==============================
+    # 分支 B: 间断区
+    # ==============================
+    else 
+        WENOϵ1 = 1.0f-10; WENOϵ2 = 1.0f-8
+        tmp1 = 1.0f0/12.0f0; tmp2 = 1.0f0/6.0f0
+        # 平滑因子 ss 沿 j 方向计算
+        @inbounds ss = 2.0f0/(S[i, j+1, k] + S[i, j, k])
+
+        for n = 1:5
+            # 沿 j 方向读取模板
+            @inbounds V1L = U[i,j-3,k,n]
+            @inbounds V2L = U[i,j-2,k,n]
+            @inbounds V3L = U[i,j-1,k,n]
+            @inbounds V4L = U[i,j  ,k,n]
+            @inbounds V5L = U[i,j+1,k,n]
+            @inbounds V6L = U[i,j+2,k,n]
+            @inbounds V7L = U[i,j+3,k,n]
+
+            @inbounds V1R = U[i,j+4,k,n]
+            @inbounds V2R = U[i,j+3,k,n]
+            @inbounds V3R = U[i,j+2,k,n]
+            @inbounds V4R = U[i,j+1,k,n]
+            @inbounds V5R = U[i,j  ,k,n]
+            @inbounds V6R = U[i,j-1,k,n]
+            @inbounds V7R = U[i,j-2,k,n]
+
+            valL = 0.0f0; valR = 0.0f0
+
+            # WENO Reconstruction 逻辑与 i 方向完全一致，仅输入变量不同
+            if ϕy < hybrid_ϕ2 # WENO7
+                q1L = -3.0f0*V1L + 13.0f0*V2L - 23.0f0*V3L + 25.0f0*V4L; q1R = -3.0f0*V1R + 13.0f0*V2R - 23.0f0*V3R + 25.0f0*V4R
+                q2L =  1.0f0*V2L -  5.0f0*V3L + 13.0f0*V4L +  3.0f0*V5L; q2R =  1.0f0*V2R -  5.0f0*V3R + 13.0f0*V4R +  3.0f0*V5R
+                q3L = -1.0f0*V3L +  7.0f0*V4L +  7.0f0*V5L -  1.0f0*V6L; q3R = -1.0f0*V3R +  7.0f0*V4R +  7.0f0*V5R -  1.0f0*V6R
+                q4L =  3.0f0*V4L + 13.0f0*V5L -  5.0f0*V6L +  1.0f0*V7L; q4R =  3.0f0*V4R + 13.0f0*V5R -  5.0f0*V6R +  1.0f0*V7R
+
+                Is1L = V1L*( 547.0f0*V1L - 3882.0f0*V2L + 4642.0f0*V3L - 1854.0f0*V4L) + V2L*( 7043.0f0*V2L -17246.0f0*V3L + 7042.0f0*V4L) + V3L*(11003.0f0*V3L - 9402.0f0*V4L) + V4L*( 2107.0f0*V4L)
+                Is2L = V2L*( 267.0f0*V2L - 1642.0f0*V3L + 1602.0f0*V4L -  494.0f0*V5L) + V3L*( 2843.0f0*V3L - 5966.0f0*V4L + 1922.0f0*V5L) + V4L*( 3443.0f0*V4L - 2522.0f0*V5L) + V5L*(  547.0f0*V5L)
+                Is3L = V3L*( 547.0f0*V3L - 2522.0f0*V4L + 1922.0f0*V5L -  494.0f0*V6L) + V4L*( 3443.0f0*V4L - 5966.0f0*V5L + 1602.0f0*V6L) + V5L*( 2843.0f0*V5L - 1642.0f0*V6L) + V6L*(  267.0f0*V6L)
+                Is4L = V4L*( 2107.0f0*V4L - 9402.0f0*V5L + 7042.0f0*V6L - 1854.0f0*V7L) + V5L*(11003.0f0*V5L -17246.0f0*V6L + 4642.0f0*V7L) + V6L*( 7043.0f0*V6L - 3882.0f0*V7L) + V7L*(  547.0f0*V7L)
+
+                Is1R = V1R*( 547.0f0*V1R - 3882.0f0*V2R + 4642.0f0*V3R - 1854.0f0*V4R) + V2R*( 7043.0f0*V2R -17246.0f0*V3R + 7042.0f0*V4R) + V3R*(11003.0f0*V3R - 9402.0f0*V4R) + V4R*( 2107.0f0*V4R)
+                Is2R = V2R*( 267.0f0*V2R - 1642.0f0*V3R + 1602.0f0*V4R -  494.0f0*V5R) + V3R*( 2843.0f0*V3R - 5966.0f0*V4R + 1922.0f0*V5R) + V4R*( 3443.0f0*V4R - 2522.0f0*V5R) + V5R*(  547.0f0*V5R)
+                Is3R = V3R*( 547.0f0*V3R - 2522.0f0*V4R + 1922.0f0*V5R -  494.0f0*V6R) + V4R*( 3443.0f0*V4R - 5966.0f0*V5R + 1602.0f0*V6R) + V5R*( 2843.0f0*V5R - 1642.0f0*V6R) + V6R*(  267.0f0*V6R)
+                Is4R = V4R*( 2107.0f0*V4R - 9402.0f0*V5R + 7042.0f0*V6R - 1854.0f0*V7R) + V5R*(11003.0f0*V5R -17246.0f0*V6R + 4642.0f0*V7R) + V6R*( 7043.0f0*V6R - 3882.0f0*V7R) + V7R*(  547.0f0*V7R)
+
+                t_d1L = WENOϵ1 + Is1L*ss; α1L = 1.0f0/(t_d1L * t_d1L);  t_d1R = WENOϵ1 + Is1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2L = WENOϵ1 + Is2L*ss; α2L = 12.0f0/(t_d2L * t_d2L); t_d2R = WENOϵ1 + Is2R*ss; α2R = 12.0f0/(t_d2R * t_d2R)
+                t_d3L = WENOϵ1 + Is3L*ss; α3L = 18.0f0/(t_d3L * t_d3L); t_d3R = WENOϵ1 + Is3R*ss; α3R = 18.0f0/(t_d3R * t_d3R)
+                t_d4L = WENOϵ1 + Is4L*ss; α4L = 4.0f0/(t_d4L * t_d4L);  t_d4R = WENOϵ1 + Is4R*ss; α4R = 4.0f0/(t_d4R * t_d4R)
+
+                invsumL = 1.0f0/(α1L+α2L+α3L+α4L); invsumR = 1.0f0/(α1R+α2R+α3R+α4R)
+                valL = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
+                valR = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
+
+            elseif ϕy < hybrid_ϕ3 # WENO5
+                t1 = V2L - 2.0f0*V3L + V4L; t2 = V2L - 4.0f0*V3L + 3.0f0*V4L
+                s1L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3L - 2.0f0*V4L + V5L; t2 = V3L - V5L
+                s2L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4L - 2.0f0*V5L + V6L; t2 = 3.0f0*V4L - 4.0f0*V5L + V6L
+                s3L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                t_d1L = WENOϵ2 + s1L*ss; α1L = 1.0f0/(t_d1L * t_d1L)
+                t_d2L = WENOϵ2 + s2L*ss; α2L = 6.0f0/(t_d2L * t_d2L)
+                t_d3L = WENOϵ2 + s3L*ss; α3L = 3.0f0/(t_d3L * t_d3L)
+                invsumL = 1.0f0/(α1L+α2L+α3L)
+
+                v1 = 2.0f0*V2L - 7.0f0*V3L + 11.0f0*V4L
+                v2 = -1.0f0*V3L + 5.0f0*V4L + 2.0f0*V5L
+                v3 = 2.0f0*V4L + 5.0f0*V5L - 1.0f0*V6L
+                
+                valL = invsumL * (α1L*v1 + α2L*v2 + α3L*v3) * tmp2
+
+                t1 = V2R - 2.0f0*V3R + V4R; t2 = V2R - 4.0f0*V3R + 3.0f0*V4R
+                s1R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3R - 2.0f0*V4R + V5R; t2 = V3R - V5R
+                s2R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4R - 2.0f0*V5R + V6R; t2 = 3.0f0*V4R - 4.0f0*V5R + V6R
+                s3R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                t_d1R = WENOϵ2 + s1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2R = WENOϵ2 + s2R*ss; α2R = 6.0f0/(t_d2R * t_d2R)
+                t_d3R = WENOϵ2 + s3R*ss; α3R = 3.0f0/(t_d3R * t_d3R)
+                invsumR = 1.0f0/(α1R+α2R+α3R)
+
+                v1 = 2.0f0*V2R - 7.0f0*V3R + 11.0f0*V4R
+                v2 = -1.0f0*V3R + 5.0f0*V4R + 2.0f0*V5R
+                v3 = 2.0f0*V4R + 5.0f0*V5R - 1.0f0*V6R
+                
+                valR = invsumR * (α1R*v1 + α2R*v2 + α3R*v3) * tmp2
+
+            else # Minmod
+                valL = V4L + 0.5f0*minmod(V4L - V3L, V5L - V4L)
+                valR = V4R - 0.5f0*minmod(V4R - V3R, V4R - V5R)
+            end
+            
+            if n == 1;      UL_final_1 = valL; UR_final_1 = valR
+            elseif n == 2;  UL_final_2 = valL; UR_final_2 = valR
+            elseif n == 3;  UL_final_3 = valL; UR_final_3 = valR
+            elseif n == 4;  UL_final_4 = valL; UR_final_4 = valR
+            else;           UL_final_5 = valL; UR_final_5 = valR
+            end
+        end
+    end
+
+    # 4. 组装并计算通量
+    UL_vec = SVector{5,Float32}(UL_final_1, UL_final_2, UL_final_3, UL_final_4, UL_final_5)
+    UR_vec = SVector{5,Float32}(UR_final_1, UR_final_2, UR_final_3, UR_final_4, UR_final_5)
+    
+    flux_temp = HLLC_Flux(UL_vec, UR_vec, nx, ny, nz)
+
+    @inbounds begin
+        # 注意：Fy 的写入位置 j 偏移 1
+        Fy[i-NG, j-NG+1, k-NG, 1] = UR_final_1#flux_temp[1] * Area
+        Fy[i-NG, j-NG+1, k-NG, 2] = UL_final_2#flux_temp[2] * Area
+        Fy[i-NG, j-NG+1, k-NG, 3] = UR_final_3#flux_temp[3] * Area
+        Fy[i-NG, j-NG+1, k-NG, 4] = UR_final_4#flux_temp[4] * Area
+        Fy[i-NG, j-NG+1, k-NG, 5] = UR_final_5#flux_temp[5] * Area
+    end
+    return 
+end
+
+function Conser_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
+    i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
+    j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
+    k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
+    
+    # 1. 边界检查
+    if i > Nxp+NG || j > Nyp+NG || k > Nzp+NG || i < NG+1 || j < NG+1 || k < NG
+        return
+    end
+
+    # 2. 几何计算 (使用 zeta 度量项，k 和 k+1 界面)
+    @inbounds nx = (dζdx[i, j, k] + dζdx[i, j, k+1]) * 0.5f0
+    @inbounds ny = (dζdy[i, j, k] + dζdy[i, j, k+1]) * 0.5f0
+    @inbounds nz = (dζdz[i, j, k] + dζdz[i, j, k+1]) * 0.5f0
+    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
+    @inbounds inv_len = 1.0f0 / Area
+    @inbounds nx *= inv_len
+    @inbounds ny *= inv_len
+    @inbounds nz *= inv_len
+
+    # 3. 激波传感器 (沿 k 方向)
+    @inbounds ϕz = max(ϕ[i, j, k-2], ϕ[i, j, k-1], ϕ[i, j, k], ϕ[i, j, k+1], ϕ[i, j, k+2], ϕ[i, j, k+3])
+
+    # 准备最终累加变量
+    UL_final_1 = 0.0f0; UL_final_2 = 0.0f0; UL_final_3 = 0.0f0; UL_final_4 = 0.0f0; UL_final_5 = 0.0f0
+    UR_final_1 = 0.0f0; UR_final_2 = 0.0f0; UR_final_3 = 0.0f0; UR_final_4 = 0.0f0; UR_final_5 = 0.0f0
+
+    # ==============================
+    # 分支 A: 光滑区
+    # ==============================
+    if ϕz < hybrid_ϕ1
+        for n = 1:5
+            # 模版沿 k 方向取值
+            @inbounds v1 = U[i,j,k-3,n]; v2 = U[i,j,k-2,n]; v3 = U[i,j,k-1,n]
+            @inbounds v4 = U[i,j,k  ,n]; v5 = U[i,j,k+1,n]; v6 = U[i,j,k+2,n]; v7 = U[i,j,k+3,n]
+            
+            valL = Linear[1]*v1 + Linear[2]*v2 + Linear[3]*v3 + Linear[4]*v4 + Linear[5]*v5 + Linear[6]*v6 + Linear[7]*v7
+            
+            @inbounds r1 = U[i,j,k+4,n]; r2 = U[i,j,k+3,n]; r3 = U[i,j,k+2,n]
+            @inbounds r4 = U[i,j,k+1,n]; r5 = U[i,j,k  ,n]; r6 = U[i,j,k-1,n]; r7 = U[i,j,k-2,n]
+            
+            valR = Linear[1]*r1 + Linear[2]*r2 + Linear[3]*r3 + Linear[4]*r4 + Linear[5]*r5 + Linear[6]*r6 + Linear[7]*r7
+
+            if n==1;     UL_final_1=valL; UR_final_1=valR
+            elseif n==2; UL_final_2=valL; UR_final_2=valR
+            elseif n==3; UL_final_3=valL; UR_final_3=valR
+            elseif n==4; UL_final_4=valL; UR_final_4=valR
+            else;        UL_final_5=valL; UR_final_5=valR; end
+        end
+
+    # ==============================
+    # 分支 B: 间断区
+    # ==============================
+    else 
+        WENOϵ1 = 1.0f-10; WENOϵ2 = 1.0f-8
+        tmp1 = 1.0f0/12.0f0; tmp2 = 1.0f0/6.0f0
+        # 平滑因子 ss 沿 k 方向计算
+        @inbounds ss = 2.0f0/(S[i, j, k+1] + S[i, j, k])
+
+        for n = 1:5
+            # 沿 k 方向读取模板
+            @inbounds V1L = U[i,j,k-3,n]
+            @inbounds V2L = U[i,j,k-2,n]
+            @inbounds V3L = U[i,j,k-1,n]
+            @inbounds V4L = U[i,j,k  ,n]
+            @inbounds V5L = U[i,j,k+1,n]
+            @inbounds V6L = U[i,j,k+2,n]
+            @inbounds V7L = U[i,j,k+3,n]
+
+            @inbounds V1R = U[i,j,k+4,n]
+            @inbounds V2R = U[i,j,k+3,n]
+            @inbounds V3R = U[i,j,k+2,n]
+            @inbounds V4R = U[i,j,k+1,n]
+            @inbounds V5R = U[i,j,k  ,n]
+            @inbounds V6R = U[i,j,k-1,n]
+            @inbounds V7R = U[i,j,k-2,n]
+
+            valL = 0.0f0; valR = 0.0f0
+
+            if ϕz < hybrid_ϕ2 # WENO7
+                q1L = -3.0f0*V1L + 13.0f0*V2L - 23.0f0*V3L + 25.0f0*V4L; q1R = -3.0f0*V1R + 13.0f0*V2R - 23.0f0*V3R + 25.0f0*V4R
+                q2L =  1.0f0*V2L -  5.0f0*V3L + 13.0f0*V4L +  3.0f0*V5L; q2R =  1.0f0*V2R -  5.0f0*V3R + 13.0f0*V4R +  3.0f0*V5R
+                q3L = -1.0f0*V3L +  7.0f0*V4L +  7.0f0*V5L -  1.0f0*V6L; q3R = -1.0f0*V3R +  7.0f0*V4R +  7.0f0*V5R -  1.0f0*V6R
+                q4L =  3.0f0*V4L + 13.0f0*V5L -  5.0f0*V6L +  1.0f0*V7L; q4R =  3.0f0*V4R + 13.0f0*V5R -  5.0f0*V6R +  1.0f0*V7R
+
+                Is1L = V1L*( 547.0f0*V1L - 3882.0f0*V2L + 4642.0f0*V3L - 1854.0f0*V4L) + V2L*( 7043.0f0*V2L -17246.0f0*V3L + 7042.0f0*V4L) + V3L*(11003.0f0*V3L - 9402.0f0*V4L) + V4L*( 2107.0f0*V4L)
+                Is2L = V2L*( 267.0f0*V2L - 1642.0f0*V3L + 1602.0f0*V4L -  494.0f0*V5L) + V3L*( 2843.0f0*V3L - 5966.0f0*V4L + 1922.0f0*V5L) + V4L*( 3443.0f0*V4L - 2522.0f0*V5L) + V5L*(  547.0f0*V5L)
+                Is3L = V3L*( 547.0f0*V3L - 2522.0f0*V4L + 1922.0f0*V5L -  494.0f0*V6L) + V4L*( 3443.0f0*V4L - 5966.0f0*V5L + 1602.0f0*V6L) + V5L*( 2843.0f0*V5L - 1642.0f0*V6L) + V6L*(  267.0f0*V6L)
+                Is4L = V4L*( 2107.0f0*V4L - 9402.0f0*V5L + 7042.0f0*V6L - 1854.0f0*V7L) + V5L*(11003.0f0*V5L -17246.0f0*V6L + 4642.0f0*V7L) + V6L*( 7043.0f0*V6L - 3882.0f0*V7L) + V7L*(  547.0f0*V7L)
+
+                Is1R = V1R*( 547.0f0*V1R - 3882.0f0*V2R + 4642.0f0*V3R - 1854.0f0*V4R) + V2R*( 7043.0f0*V2R -17246.0f0*V3R + 7042.0f0*V4R) + V3R*(11003.0f0*V3R - 9402.0f0*V4R) + V4R*( 2107.0f0*V4R)
+                Is2R = V2R*( 267.0f0*V2R - 1642.0f0*V3R + 1602.0f0*V4R -  494.0f0*V5R) + V3R*( 2843.0f0*V3R - 5966.0f0*V4R + 1922.0f0*V5R) + V4R*( 3443.0f0*V4R - 2522.0f0*V5R) + V5R*(  547.0f0*V5R)
+                Is3R = V3R*( 547.0f0*V3R - 2522.0f0*V4R + 1922.0f0*V5R -  494.0f0*V6R) + V4R*( 3443.0f0*V4R - 5966.0f0*V5R + 1602.0f0*V6R) + V5R*( 2843.0f0*V5R - 1642.0f0*V6R) + V6R*(  267.0f0*V6R)
+                Is4R = V4R*( 2107.0f0*V4R - 9402.0f0*V5R + 7042.0f0*V6R - 1854.0f0*V7R) + V5R*(11003.0f0*V5R -17246.0f0*V6R + 4642.0f0*V7R) + V6R*( 7043.0f0*V6R - 3882.0f0*V7R) + V7R*(  547.0f0*V7R)
+
+                t_d1L = WENOϵ1 + Is1L*ss; α1L = 1.0f0/(t_d1L * t_d1L);  t_d1R = WENOϵ1 + Is1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2L = WENOϵ1 + Is2L*ss; α2L = 12.0f0/(t_d2L * t_d2L); t_d2R = WENOϵ1 + Is2R*ss; α2R = 12.0f0/(t_d2R * t_d2R)
+                t_d3L = WENOϵ1 + Is3L*ss; α3L = 18.0f0/(t_d3L * t_d3L); t_d3R = WENOϵ1 + Is3R*ss; α3R = 18.0f0/(t_d3R * t_d3R)
+                t_d4L = WENOϵ1 + Is4L*ss; α4L = 4.0f0/(t_d4L * t_d4L);  t_d4R = WENOϵ1 + Is4R*ss; α4R = 4.0f0/(t_d4R * t_d4R)
+
+                invsumL = 1.0f0/(α1L+α2L+α3L+α4L); invsumR = 1.0f0/(α1R+α2R+α3R+α4R)
+                valL = invsumL*(α1L*q1L+α2L*q2L+α3L*q3L+α4L*q4L) * tmp1
+                valR = invsumR*(α1R*q1R+α2R*q2R+α3R*q3R+α4R*q4R) * tmp1
+
+            elseif ϕz < hybrid_ϕ3 # WENO5
+                t1 = V2L - 2.0f0*V3L + V4L; t2 = V2L - 4.0f0*V3L + 3.0f0*V4L
+                s1L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3L - 2.0f0*V4L + V5L; t2 = V3L - V5L
+                s2L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4L - 2.0f0*V5L + V6L; t2 = 3.0f0*V4L - 4.0f0*V5L + V6L
+                s3L = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                t_d1L = WENOϵ2 + s1L*ss; α1L = 1.0f0/(t_d1L * t_d1L)
+                t_d2L = WENOϵ2 + s2L*ss; α2L = 6.0f0/(t_d2L * t_d2L)
+                t_d3L = WENOϵ2 + s3L*ss; α3L = 3.0f0/(t_d3L * t_d3L)
+                invsumL = 1.0f0/(α1L+α2L+α3L)
+
+                v1 = 2.0f0*V2L - 7.0f0*V3L + 11.0f0*V4L
+                v2 = -1.0f0*V3L + 5.0f0*V4L + 2.0f0*V5L
+                v3 = 2.0f0*V4L + 5.0f0*V5L - 1.0f0*V6L
+                
+                valL = invsumL * (α1L*v1 + α2L*v2 + α3L*v3) * tmp2
+
+                t1 = V2R - 2.0f0*V3R + V4R; t2 = V2R - 4.0f0*V3R + 3.0f0*V4R
+                s1R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V3R - 2.0f0*V4R + V5R; t2 = V3R - V5R
+                s2R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+                t1 = V4R - 2.0f0*V5R + V6R; t2 = 3.0f0*V4R - 4.0f0*V5R + V6R
+                s3R = 13.0f0 * t1*t1 + 3.0f0 * t2*t2
+
+                t_d1R = WENOϵ2 + s1R*ss; α1R = 1.0f0/(t_d1R * t_d1R)
+                t_d2R = WENOϵ2 + s2R*ss; α2R = 6.0f0/(t_d2R * t_d2R)
+                t_d3R = WENOϵ2 + s3R*ss; α3R = 3.0f0/(t_d3R * t_d3R)
+                invsumR = 1.0f0/(α1R+α2R+α3R)
+
+                v1 = 2.0f0*V2R - 7.0f0*V3R + 11.0f0*V4R
+                v2 = -1.0f0*V3R + 5.0f0*V4R + 2.0f0*V5R
+                v3 = 2.0f0*V4R + 5.0f0*V5R - 1.0f0*V6R
+                
+                valR = invsumR * (α1R*v1 + α2R*v2 + α3R*v3) * tmp2
+
+            else # Minmod
+                valL = V4L + 0.5f0*minmod(V4L - V3L, V5L - V4L)
+                valR = V4R - 0.5f0*minmod(V4R - V3R, V4R - V5R)
+            end
+            
+            if n == 1;      UL_final_1 = valL; UR_final_1 = valR
+            elseif n == 2;  UL_final_2 = valL; UR_final_2 = valR
+            elseif n == 3;  UL_final_3 = valL; UR_final_3 = valR
+            elseif n == 4;  UL_final_4 = valL; UR_final_4 = valR
+            else;           UL_final_5 = valL; UR_final_5 = valR
+            end
+        end
+    end
+
+    # 4. 组装并计算通量
+    UL_vec = SVector{5,Float32}(UL_final_1, UL_final_2, UL_final_3, UL_final_4, UL_final_5)
+    UR_vec = SVector{5,Float32}(UR_final_1, UR_final_2, UR_final_3, UR_final_4, UR_final_5)
+    
+    flux_temp = HLLC_Flux(UL_vec, UR_vec, nx, ny, nz)
+
+    @inbounds begin
+        # 注意：Fz 的写入位置 k 偏移 1
+        Fz[i-NG, j-NG, k-NG+1, 1] = UR_final_1#flux_temp[1] * Area
+        Fz[i-NG, j-NG, k-NG+1, 2] = UL_final_2#flux_temp[2] * Area
+        Fz[i-NG, j-NG, k-NG+1, 3] = UR_final_3#flux_temp[3] * Area
+        Fz[i-NG, j-NG, k-NG+1, 4] = UR_final_4#flux_temp[4] * Area
+        Fz[i-NG, j-NG, k-NG+1, 5] = UR_final_5#flux_temp[5] * Area
+    end
+    return 
 end
 
 @inline function HLLC_Flux(UL, UR, nx, ny, nz)
@@ -734,7 +1241,7 @@ end
     # ------------------------------------------------------------------
     # HLLC 对 S* 的定义
     S_star = (pR - pL + ρL * qL * (SL - qL) - ρR * qR * (SR - qR)) / 
-             (ρL * (SL - qL) - ρR * (SR - qR) + 1e-12f0) # 加极小量防除零
+             (ρL * (SL - qL) - ρR * (SR - qR) + 1f-12) # 加极小量防除零
 
     # 4. 根据波速位置选择通量 (Logic Branching)
     # ------------------------------------------------------------------
@@ -777,7 +1284,6 @@ end
         Us3 = factor * (vL + (S_star - qL) * ny)
         Us4 = factor * (wL + (S_star - qL) * nz)
         Us5 = factor * (EL * inv_ρL + (S_star - qL) * (S_star + pL / (ρL * (SL - qL))))
-
         return SVector{5, Float32}(
             FL1 + SL * (Us1 - UL[1]),
             FL2 + SL * (Us2 - UL[2]),
@@ -805,7 +1311,6 @@ end
         Us3 = factor * (vR + (S_star - qR) * ny)
         Us4 = factor * (wR + (S_star - qR) * nz)
         Us5 = factor * (ER * inv_ρR + (S_star - qR) * (S_star + pR / (ρR * (SR - qR))))
-
         return SVector{5, Float32}(
             FR1 + SR * (Us1 - UR[1]),
             FR2 + SR * (Us2 - UR[2]),
@@ -814,15 +1319,4 @@ end
             FR5 + SR * (Us5 - UR[5])
         )
     end
-end
-
-function Riemann_Solver(Q, U, ϕ, S, Fx, Fy, Fz, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz)
-    if eigen_reconstruction
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
-        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
-    end
-    
-    
-
 end

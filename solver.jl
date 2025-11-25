@@ -14,15 +14,122 @@ include("utils.jl")
 include("div.jl")
 include("mpi.jl")
 include("IO.jl")
+include("FVM.jl")
 
 function flowAdvance(U, Q, Fp, Fm, Fx, Fy, Fz, Fv_x, Fv_y, Fv_z, s1, s2, s3, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J, ϕ)
 
     if finite_volume
         if eigen_reconstruction
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_i(Q, U, ϕ, s1, Fx, dξdx, dξdy, dξdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_j(Q, U, ϕ, s2, Fy, dηdx, dηdy, dηdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_k(Q, U, ϕ, s3, Fz, dζdx, dζdy, dζdz)
+        else
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_i(Q, U, ϕ, s1, Fx, dξdx, dξdy, dξdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_j(Q, U, ϕ, s2, Fy, dηdx, dηdy, dηdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_k(Q, U, ϕ, s3, Fz, dζdx, dζdy, dζdz)
         end
+        # Fx_cpu_FVM = Array(Fx)
+        # @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
+        # @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_xc(Fx, ϕ, s1, Fp, Fm, Q, dξdx, dξdy, dξdz)
+        # # @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s2, dηdx, dηdy, dηdz)
+        # # @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock advect_yc(Fy, ϕ, s2, Fp, Fm, Q, dηdx, dηdy, dηdz)
+        # Fx_cpu_FDM = Array(Fx)
+        # @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_j(Q, U, ϕ, s2, Fy, dηdx, dηdy, dηdz)
+        # for i = 1:Nxp+1
+        #     @printf("i = %d, Fvm1 = %f, Fvm2 = %f, Fvm3 = %f, Fvm4 = %f, Fvm5 = %f, Fdm1 = %f, Fdm2 = %f, Fdm3 = %f, Fdm4 = %f, Fdm5 = %f\n", i, Fx_cpu_FVM[i, 10, 10, 1], Fx_cpu_FVM[i, 10, 10, 2], Fx_cpu_FVM[i, 10, 10, 3], Fx_cpu_FVM[i, 10, 10, 4], Fx_cpu_FVM[i, 10, 10, 5], Fx_cpu_FDM[i, 10, 10, 1], Fx_cpu_FDM[i, 10, 10, 2], Fx_cpu_FDM[i, 10, 10, 3], Fx_cpu_FDM[i, 10, 10, 4], Fx_cpu_FDM[i, 10, 10, 5])
+        # end
+        # exit(1)
+            
+
+        # 1. 使用 CUDA 高效函数检查是否存在 NaN
+        # any(isnan, Array) 是 GPU 上检查 NaN 的标准写法，无需分配额外内存
+        # has_nan_x = any(isnan, Fx)
+        # has_nan_y = any(isnan, Fy)
+        # has_nan_z = any(isnan, Fz)
+
+        # if has_nan_x || has_nan_y || has_nan_z
+        #     println("\n========================================")
+        #     println("🔴 CRITICAL ERROR: NaN detected in fluxes!")
+        #     println("========================================")
+            
+        #     println("Downloading arrays to CPU for debugging...")
+            
+        #     # 将显存数据拷贝到内存
+        #     Fx_cpu = Array(Fx)
+        #     Fy_cpu = Array(Fy)
+        #     Fz_cpu = Array(Fz)
+            
+        #     max_report_count = 10 # 限制打印数量，防止刷屏
+
+        #     # --- 扫描 X 方向通量 ---
+        #     if has_nan_x
+        #         println("\n🔎 Scanning Fx (X-Fluxes)...")
+        #         count = 0
+        #         # 获取维度: 假设维度顺序是 [i, j, k, n]
+        #         Nx, Ny, Nz, Nv = size(Fx_cpu)
+                
+        #         for k = 1:Nz, j = 1:Ny, i = 1:Nx
+        #             # 检查该点 5 个变量中是否有任意一个是 NaN
+        #             if any(isnan, @view Fx_cpu[i, j, k, :])
+        #                 # 找出具体是第几个变量坏了
+        #                 bad_vars = findall(isnan, @view Fx_cpu[i, j, k, :])
+        #                 @printf("   [Fx] NaN found at (i=%d, j=%d, k=%d), Variables: %s\n", i, j, k, string(bad_vars))
+                        
+        #                 # 顺便打印该点的数值，方便分析
+        #                 # println("        Values: ", Fx_cpu[i, j, k, :]) 
+                        
+        #                 count += 1
+        #                 if count >= max_report_count
+        #                     println("   ... (Stopped reporting Fx errors, too many NaNs)")
+        #                     break
+        #                 end
+        #             end
+        #         end
+        #     end
+
+        #     # --- 扫描 Y 方向通量 ---
+        #     if has_nan_y
+        #         println("\n🔎 Scanning Fy (Y-Fluxes)...")
+        #         count = 0
+        #         Nx, Ny, Nz, Nv = size(Fy_cpu)
+                
+        #         for k = 1:Nz, j = 1:Ny, i = 1:Nx
+        #             if any(isnan, @view Fy_cpu[i, j, k, :])
+        #                 bad_vars = findall(isnan, @view Fy_cpu[i, j, k, :])
+        #                 @printf("   [Fy] NaN found at (i=%d, j=%d, k=%d), Variables: %s\n", i, j, k, string(bad_vars))
+                        
+        #                 count += 1
+        #                 if count >= max_report_count
+        #                     println("   ... (Stopped reporting Fy errors)")
+        #                     break
+        #                 end
+        #             end
+        #         end
+        #     end
+
+        #     # --- 扫描 Z 方向通量 ---
+        #     if has_nan_z
+        #         println("\n🔎 Scanning Fz (Z-Fluxes)...")
+        #         count = 0
+        #         Nx, Ny, Nz, Nv = size(Fz_cpu)
+                
+        #         for k = 1:Nz, j = 1:Ny, i = 1:Nx
+        #             if any(isnan, @view Fz_cpu[i, j, k, :])
+        #                 bad_vars = findall(isnan, @view Fz_cpu[i, j, k, :])
+        #                 @printf("   [Fz] NaN found at (i=%d, j=%d, k=%d), Variables: %s\n", i, j, k, string(bad_vars))
+                        
+        #                 count += 1
+        #                 if count >= max_report_count
+        #                     println("   ... (Stopped reporting Fz errors)")
+        #                     break
+        #                 end
+        #             end
+        #         end
+        #     end
+            
+        #     println("\nExiting due to numerical instability.")
+        #     exit(1)
+        # end
     else
         if splitMethod == "SW"
             @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
@@ -76,7 +183,9 @@ function flowAdvance(U, Q, Fp, Fm, Fx, Fy, Fz, Fv_x, Fv_y, Fv_z, s1, s2, s3, dξ
         end
     end
 
-    @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock viscousFlux(Fv_x, Fv_y, Fv_z, Q, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J)
+    if viscous
+        @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock viscousFlux(Fv_x, Fv_y, Fv_z, Q, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J)
+    end
 end
 
 function time_step(rank, comm_cart)
@@ -117,7 +226,7 @@ function time_step(rank, comm_cart)
         copyto!(Q_h, Q)
         inlet = cu(inlet_h)
 
-        initialize(Q, inlet, ranky)
+        initialize(Q, rankx, ranky, Nprocs)
     end
     
     ϕ_h = zeros(Float32, Nx_tot, Ny_tot, Nz_tot) # shock sensor
@@ -204,7 +313,7 @@ function time_step(rank, comm_cart)
                    Qsbuf_hx, Qsbuf_dx, Qrbuf_hx, Qrbuf_dx,
                    Qsbuf_hy, Qsbuf_dy, Qrbuf_hy, Qrbuf_dy,
                    Qsbuf_hz, Qsbuf_dz, Qrbuf_hz, Qrbuf_dz)
-    fillGhost(Q, U, rankx, ranky, inlet)
+    fillGhost(Q, U, rankx, ranky)
 
     # sampling metadata
     if sample
@@ -302,7 +411,7 @@ function time_step(rank, comm_cart)
                            Qsbuf_hx, Qsbuf_dx, Qrbuf_hx, Qrbuf_dx,
                            Qsbuf_hy, Qsbuf_dy, Qrbuf_hy, Qrbuf_dy,
                            Qsbuf_hz, Qsbuf_dz, Qrbuf_hz, Qrbuf_dz)
-            fillGhost(Q, U, rankx, ranky, inlet)
+            fillGhost(Q, U, rankx, ranky)
         end
 
         if filtering && tt % filtering_interval == 0
@@ -331,7 +440,7 @@ function time_step(rank, comm_cart)
             end
         end
 
-        if tt % 10 == 0 && rank == 0
+        if tt % 1 == 0 && rank == 0
             printstyled("Step: ", color=:cyan)
             @printf "%g" tt
             printstyled("\tTime: ", color=:blue)

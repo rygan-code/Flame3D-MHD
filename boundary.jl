@@ -62,7 +62,7 @@ function fill_z(Q, U)
     return
 end
 
-function fill_y(Q, U, rankx, ranky)
+function fill_y(Q, U)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -71,60 +71,20 @@ function fill_y(Q, U, rankx, ranky)
         return
     end
 
-    # Bottom Wall (ranky == 0)
-    if ranky == 0 && j <= NG
-        # 对称边界/滑移壁面逻辑：
-        # 标量(rho, p, T, u, w) 关于边界对称 -> Ghost = Inner
-        # 法向矢量(v) 关于边界反对称 -> Ghost = -Inner (确保壁面处 v=0)
-        
-        # 对应的内部网格索引。例如 j=NG 对应 j=NG+1
-        # 简单的镜像索引逻辑: j_inner = 2*NG + 1 - j (如果 ghost 是 l=NG:-1:1)
-        # 但为了简单的零梯度滑移，直接取最近的内部点通常足够稳定：
-        j_inner = 2*NG + 1 - j 
-
-        @inbounds Q[i, j, k, 1] = Q[i, j_inner, k, 1] # rho
-        @inbounds Q[i, j, k, 2] = Q[i, j_inner, k, 2] # u
-        @inbounds Q[i, j, k, 3] = -Q[i, j_inner, k, 3] # v (反向)
-        @inbounds Q[i, j, k, 4] = Q[i, j_inner, k, 4] # w
-        @inbounds Q[i, j, k, 5] = Q[i, j_inner, k, 5] # p
-        @inbounds Q[i, j, k, 6] = Q[i, j_inner, k, 6] # T
-
-        # 更新守恒变量 U
-        ρ = Q[i, j, k, 1]
-        u = Q[i, j, k, 2]
-        v = Q[i, j, k, 3]
-        w = Q[i, j, k, 4]
-        p = Q[i, j, k, 5]
-        
-        @inbounds U[i, j, k, 1] = ρ
-        @inbounds U[i, j, k, 2] = ρ * u
-        @inbounds U[i, j, k, 3] = ρ * v
-        @inbounds U[i, j, k, 4] = ρ * w
-        @inbounds U[i, j, k, 5] = p/(γ-1) + 0.5f0 * ρ * (u^2+v^2+w^2)
-    end
-
-    # Top Wall (ranky == end)
-    if ranky == (Nprocs[2]-1) && j > Nyp+NG
-        j_inner = 2*(Nyp+NG) + 1 - j # 镜像索引
-
-        @inbounds Q[i, j, k, 1] = Q[i, j_inner, k, 1]
-        @inbounds Q[i, j, k, 2] = Q[i, j_inner, k, 2]
-        @inbounds Q[i, j, k, 3] = -Q[i, j_inner, k, 3] # v 反向
-        @inbounds Q[i, j, k, 4] = Q[i, j_inner, k, 4]
-        @inbounds Q[i, j, k, 5] = Q[i, j_inner, k, 5]
-        @inbounds Q[i, j, k, 6] = Q[i, j_inner, k, 6]
-
-        ρ = Q[i, j, k, 1]
-        u = Q[i, j, k, 2]
-        v = Q[i, j, k, 3]
-        w = Q[i, j, k, 4]
-        p = Q[i, j, k, 5]
-        
-        @inbounds U[i, j, k, 1] = ρ
-        @inbounds U[i, j, k, 2] = ρ * u
-        @inbounds U[i, j, k, 3] = ρ * v
-        @inbounds U[i, j, k, 4] = ρ * w
-        @inbounds U[i, j, k, 5] = p/(γ-1) + 0.5f0 * ρ * (u^2+v^2+w^2)
+    if j <= NG
+        for n = 1:Nprim
+            @inbounds Q[i, j, k, n] = Q[i, j+Nyp, k, n]
+        end
+        for n = 1:Ncons
+            @inbounds U[i, j, k, n] = U[i, j+Nyp, k, n]
+        end
+    elseif j > Nyp+NG
+        for n = 1:Nprim
+            @inbounds Q[i, j, k, n] = Q[i, j-Nyp, k, n]
+        end
+        for n = 1:Ncons
+            @inbounds U[i, j, k, n] = U[i, j-Nyp, k, n]
+        end
     end
     return
 end
@@ -133,8 +93,8 @@ end
 function fillGhost(Q, U, rankx, ranky)
     # 注意：inlet 参数已被移除，因为 Sod 问题不需要外部入口文件
     @cuda threads=nthreads blocks=nblock fill_x(Q, U, rankx, ranky)
-    # @cuda threads=nthreads blocks=nblock fill_y(Q, U, rankx, ranky)
-    # @cuda threads=nthreads blocks=nblock fill_z(Q, U)
+    @cuda threads=nthreads blocks=nblock fill_y(Q, U)
+    @cuda threads=nthreads blocks=nblock fill_z(Q, U)
 end
 
 # -----------------------------------------------------------------
@@ -142,7 +102,7 @@ end
 # 左侧 (x < 0.5): rho=1, p=1, u=0
 # 右侧 (x > 0.5): rho=0.125, p=0.1, u=0
 # -----------------------------------------------------------------
-function init(Q, U, rankx, ranky, Nprocs)
+function init(Q, rankx, ranky, Nprocs)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -164,6 +124,11 @@ function init(Q, U, rankx, ranky, Nprocs)
         # 设定隔膜在中间
         is_left = gid_x <= (total_Nx / 2)
 
+            # ρ = 1.0f0
+            # p = 1.0f0
+            # u = j
+            # v = j
+            # w = j
         if is_left
             # Left State
             ρ = 1.0f0
@@ -190,19 +155,12 @@ function init(Q, U, rankx, ranky, Nprocs)
         @inbounds Q[i, j, k, 4] = w
         @inbounds Q[i, j, k, 5] = p
         @inbounds Q[i, j, k, 6] = T
-
-        # 填充 Conservative Variables U
-        @inbounds U[i, j, k, 1] = ρ
-        @inbounds U[i, j, k, 2] = ρ * u
-        @inbounds U[i, j, k, 3] = ρ * v
-        @inbounds U[i, j, k, 4] = ρ * w
-        @inbounds U[i, j, k, 5] = p/(γ-1) + 0.5f0 * ρ * (u^2+v^2+w^2)
     end
     return
 end
 
 # Initialization wrapper
 # 注意：这里我添加了 U, rankx, Nprocs 到参数列表
-function initialize(Q, U, rankx, ranky, Nprocs)
-    @cuda threads=nthreads blocks=nblock init(Q, U, rankx, ranky, Nprocs)
+function initialize(Q, rankx, ranky, Nprocs)
+    @cuda threads=nthreads blocks=nblock init(Q, rankx, ranky, Nprocs)
 end

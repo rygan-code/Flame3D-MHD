@@ -20,8 +20,8 @@ const Iperiodic = (false, true, true)   # periodic direction
 
 const LTS::Bool = false              # if use LTS (local time stepping)
 const LTS_CFL::Float32 = 0.5f0       # LTS auto Δt CFL
-const dt::Float32 = 3f-8             # dt for simulation, make CFL < 1
-const Time::Float32 = 1f-3           # total simulation time
+const dt::Float32 = 3f-4             # dt for simulation, make CFL < 1
+const Time::Float32 = 1f0           # total simulation time
 const maxStep::Int64 = 1000         # max steps to run
 
 const plt_xdmf::Bool = true         # if use HDF5+XDMF for plt output
@@ -38,7 +38,7 @@ const restart::String = "none"     # restart use checkpoint, file name "*.h5" or
 
 const average::Bool = false                 # if do average
 const avg_step::Int64 = 10                  # average interval
-const avg_total::Int64 = 1000               # total number of samples
+const avg_total::Int64 = 2000               # total number of samples
 const avg_shuffle::Bool = true       # shuffle to make compress more efficient
 const avg_compress_level::Int64 = 1  # output file compression level 0-9, 0 for no compression
 
@@ -56,6 +56,9 @@ const filtering_s0::Float32 = 1.f0         # filtering strength
 # do not change 
 const Ncons::Int64 = 5 # ρ ρu ρv ρw E 
 const Nprim::Int64 = 6 # ρ u v w p T
+
+# is viscous
+const viscous::Bool = true
 
 # finite volume scheme
 const finite_volume::Bool = true   # if use finite volume scheme, else finite difference
@@ -81,12 +84,22 @@ const Nz::Int64 = h5read(mesh, "Nz")
 const Nxp::Int64 = Nx ÷ Nprocs[1] # make sure it is integer
 const Nyp::Int64 = Ny ÷ Nprocs[2] # make sure it is integer
 const Nzp::Int64 = Nz ÷ Nprocs[3] # make sure it is integer
-# here we use 512 threads/block and limit registers to 128
-const maxreg::Int64 = 128
-const nthreads::Tuple{Int32, Int32, Int32} = (8, 8, 8)
-const nblock::Tuple{Int32, Int32, Int32} = (cld((Nxp+2*NG), 8), 
-                                            cld((Nyp+2*NG), 8),
-                                            cld((Nzp+2*NG), 8))
+
+if finite_volume
+    # here we use 256 threads/block and limit registers to 256
+    const maxreg::Int64 = 256
+    const nthreads::Tuple{Int32, Int32, Int32} = (8, 4, 8)
+    const nblock::Tuple{Int32, Int32, Int32} = (cld((Nxp+2*NG), 8), 
+                                                cld((Nyp+2*NG), 4),
+                                                cld((Nzp+2*NG), 8))
+else
+    # here we use 512 threads/block and limit registers to 128
+    const maxreg::Int64 = 256
+    const nthreads::Tuple{Int32, Int32, Int32} = (8, 8, 8)
+    const nblock::Tuple{Int32, Int32, Int32} = (cld((Nxp+2*NG), 8), 
+                                                cld((Nyp+2*NG), 8),
+                                                cld((Nzp+2*NG), 8))
+end
 
 # For simple kernel without register limit
 const nthreads2::Tuple{Int32, Int32, Int32} = (16, 8, 8)
