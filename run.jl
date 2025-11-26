@@ -20,18 +20,18 @@ const Iperiodic = (false, true, true)   # periodic direction
 
 const LTS::Bool = false              # if use LTS (local time stepping)
 const LTS_CFL::Float32 = 0.5f0       # LTS auto Δt CFL
-const dt::Float32 = 3f-4             # dt for simulation, make CFL < 1
-const Time::Float32 = 1f0           # total simulation time
-const maxStep::Int64 = 1000         # max steps to run
+const dt::Float32 = 1f-4             # dt for simulation, make CFL < 1
+const Time::Float32 = 100.0           # total simulation time
+const maxStep::Int64 = 200000         # max steps to run
 
 const plt_xdmf::Bool = true         # if use HDF5+XDMF for plt output
 const plt_out::Bool = true           # if output plt file
-const step_plt::Int64 = 100          # how many steps to save plt
+const step_plt::Int64 = 5000          # how many steps to save plt
 const plt_shuffle::Bool = true       # shuffle to make compress more efficient
 const plt_compress_level::Int64 = 1  # output file compression level 0-9, 0 for no compression
 
 const chk_out::Bool = false           # if checkpoint is made on save
-const step_chk::Int64 = 2000          # how many steps to save chk
+const step_chk::Int64 = 5000          # how many steps to save chk
 const chk_shuffle::Bool = true       # shuffle to make compress more efficient
 const chk_compress_level::Int64 = 1  # checkpoint file compression level 0-9, 0 for no compression
 const restart::String = "none"     # restart use checkpoint, file name "*.h5" or "none"
@@ -94,7 +94,7 @@ if finite_volume
                                                 cld((Nzp+2*NG), 8))
 else
     # here we use 512 threads/block and limit registers to 128
-    const maxreg::Int64 = 256
+    const maxreg::Int64 = 128
     const nthreads::Tuple{Int32, Int32, Int32} = (8, 8, 8)
     const nblock::Tuple{Int32, Int32, Int32} = (cld((Nxp+2*NG), 8), 
                                                 cld((Nyp+2*NG), 8),

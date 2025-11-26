@@ -16,17 +16,17 @@ include("mpi.jl")
 include("IO.jl")
 include("FVM.jl")
 
-function flowAdvance(U, Q, Fp, Fm, Fx, Fy, Fz, Fv_x, Fv_y, Fv_z, s1, s2, s3, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J, ϕ)
+function flowAdvance(U, Q, Fp, Fm, Fx, Fy, Fz, Fv_x, Fv_y, Fv_z, s1, s2, s3, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J, x, y, z, ϕ)
 
     if finite_volume
         if eigen_reconstruction
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_i(Q, U, ϕ, s1, Fx, dξdx, dξdy, dξdz)
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_j(Q, U, ϕ, s2, Fy, dηdx, dηdy, dηdz)
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_k(Q, U, ϕ, s3, Fz, dζdx, dζdy, dζdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_i(Q, U, ϕ, s1, Fx, x, y, z)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_j(Q, U, ϕ, s2, Fy, x, y, z)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Eigen_reconstruct_k(Q, U, ϕ, s3, Fz, x, y, z)
         else
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_i(Q, U, ϕ, s1, Fx, dξdx, dξdy, dξdz)
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_j(Q, U, ϕ, s2, Fy, dηdx, dηdy, dηdz)
-            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_k(Q, U, ϕ, s3, Fz, dζdx, dζdy, dζdz)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_i(Q, U, ϕ, s1, Fx, x, y, z)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_j(Q, U, ϕ, s2, Fy, x, y, z)
+            @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock Conser_reconstruct_k(Q, U, ϕ, s3, Fz, x, y, z)
         end
         # Fx_cpu_FVM = Array(Fx)
         # @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock fluxSplit_SW(Q, Fp, Fm, s1, dξdx, dξdy, dξdz)
@@ -198,12 +198,15 @@ function time_step(rank, comm_cart)
 
     lox = rankx*Nxp+1
     hix = (rankx+1)*Nxp+2*NG
+    hix_without_ghost = (rankx+1)*Nxp
 
     loy = ranky*Nyp+1
     hiy = (ranky+1)*Nyp+2*NG
+    hiy_without_ghost = (ranky+1)*Nyp
 
     loz = rankz*Nzp+1
     hiz = (rankz+1)*Nzp+2*NG
+    hiz_without_ghost = (rankz+1)*Nzp
 
     if restart[end-2:end] == ".h5"
         if rank == 0
@@ -241,10 +244,33 @@ function time_step(rank, comm_cart)
     dηdz_h = fid["dηdz"][lox:hix, loy:hiy, loz:hiz]
     dζdx_h = fid["dζdx"][lox:hix, loy:hiy, loz:hiz]
     dζdy_h = fid["dζdy"][lox:hix, loy:hiy, loz:hiz]
-    dζdz_h = fid["dζdz"][lox:hix, loy:hiy, loz:hiz]
+    dζdz_h = fid["dζdz"][lox:hix, loy:hiy, loz:hiz] 
 
     J_h = fid["J"][lox:hix, loy:hiy, loz:hiz] 
     close(fid)
+
+    # load mesh coordinates
+    x_h = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
+    y_h = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
+    z_h = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
+    fid = h5open(mesh, "r", comm_cart)
+    ix_g_start = max(1,  lox - NG) ; ix_l_start = ix_g_start - lox + NG + 1
+    ix_g_end   = min(Nx, hix - NG) ; ix_l_end   = ix_g_end   - lox + NG + 1
+
+    iy_g_start = max(1,  loy - NG) ; iy_l_start = iy_g_start - loy + NG + 1
+    iy_g_end   = min(Ny, hiy - NG) ; iy_l_end   = iy_g_end   - loy + NG + 1
+    
+    iz_g_start = max(1,  loz - NG) ; iz_l_start = iz_g_start - loz + NG + 1
+    iz_g_end   = min(Nz, hiz - NG) ; iz_l_end   = iz_g_end   - loz + NG + 1
+    
+    if (ix_g_end >= ix_g_start) && (iy_g_end >= iy_g_start) && (iz_g_end >= iz_g_start)
+        x_h[ix_l_start:ix_l_end, iy_l_start:iy_l_end, iz_l_start:iz_l_end] = fid["coords"][1, ix_g_start:ix_g_end, iy_g_start:iy_g_end, iz_g_start:iz_g_end]
+        y_h[ix_l_start:ix_l_end, iy_l_start:iy_l_end, iz_l_start:iz_l_end] = fid["coords"][2, ix_g_start:ix_g_end, iy_g_start:iy_g_end, iz_g_start:iz_g_end]
+        z_h[ix_l_start:ix_l_end, iy_l_start:iy_l_end, iz_l_start:iz_l_end] = fid["coords"][3, ix_g_start:ix_g_end, iy_g_start:iy_g_end, iz_g_start:iz_g_end]
+    end
+    close(fid)
+
+    extrapolation(x_h, y_h, z_h, rankx, ranky, rankz)
 
     # move to device memory
     dξdx = cu(dξdx_h)
@@ -260,6 +286,9 @@ function time_step(rank, comm_cart)
     s1 = @. sqrt(dξdx^2+dξdy^2+dξdz^2)
     s2 = @. sqrt(dηdx^2+dηdy^2+dηdz^2)
     s3 = @. sqrt(dζdx^2+dζdy^2+dζdz^2)
+    x = cu(x_h)
+    y = cu(y_h)
+    z = cu(z_h)
 
     # allocate on device
     ϕ  =   CUDA.zeros(Float32, Nx_tot, Ny_tot, Nz_tot) # Shock sensor
@@ -393,7 +422,7 @@ function time_step(rank, comm_cart)
             end
 
             @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock shockSensor(ϕ, Q)
-            flowAdvance(U, Q, Fp, Fm, Fx, Fy, Fz, Fv_x, Fv_y, Fv_z, s1, s2, s3, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J, ϕ)
+            flowAdvance(U, Q, Fp, Fm, Fx, Fy, Fz, Fv_x, Fv_y, Fv_z, s1, s2, s3, dξdx, dξdy, dξdz, dηdx, dηdy, dηdz, dζdx, dζdy, dζdz, J, x, y, z, ϕ)
             if LTS
                 @cuda maxregs=maxreg fastmath=true threads=nthreads blocks=nblock div_LTS(U, Fx, Fy, Fz, Fv_x, Fv_y, Fv_z, LTS_dt, J)
             else
@@ -440,7 +469,7 @@ function time_step(rank, comm_cart)
             end
         end
 
-        if tt % 1 == 0 && rank == 0
+        if tt % 10 == 0 && rank == 0
             printstyled("Step: ", color=:cyan)
             @printf "%g" tt
             printstyled("\tTime: ", color=:blue)
@@ -647,5 +676,154 @@ function time_step(rank, comm_cart)
         flush(stdout)
     end
     MPI.Barrier(comm_cart)
+    return
+end
+
+function extrapolation(x, y, z, rankx, ranky, rankz)
+    # 局部网格参数 (假设 Nxp, Nyp, Nzp, NG, Nprocs 为全局常量)
+    # 如果不是常量，请作为参数传入
+    
+    # 内部计算域范围
+    I_in = NG+1 : Nxp+NG
+    J_in = NG+1 : Nyp+NG
+    K_in = NG+1 : Nzp+NG
+    
+    # Ghost 范围
+    I_gL = 1:NG
+    I_gR = Nxp+NG+1 : Nxp+2*NG
+    J_gL = 1:NG
+    J_gR = Nyp+NG+1 : Nyp+2*NG
+    K_gL = 1:NG
+    K_gR = Nzp+NG+1 : Nzp+2*NG
+
+    # ==========================================
+    # 1. X Direction Faces (Left & Right)
+    # ==========================================
+    
+    # Left Boundary (Physical)
+    if rankx == 0
+        @inbounds for k in K_in, j in J_in, i in I_gL
+            # x[i] = 2*x[NG+1] - x[2*NG+2-i]
+            idx_b   = NG + 1
+            idx_src = 2*NG + 2 - i
+            x[i, j, k] = 2*x[idx_b, j, k] - x[idx_src, j, k]
+            y[i, j, k] = 2*y[idx_b, j, k] - y[idx_src, j, k]
+            z[i, j, k] = 2*z[idx_b, j, k] - z[idx_src, j, k]
+        end
+    end
+
+    # Right Boundary (Physical)
+    if rankx == Nprocs[1] - 1
+        @inbounds for k in K_in, j in J_in, i in I_gR
+            # x[i] = 2*x[Nxp+NG] - x[2*NG+2*Nxp-i]
+            idx_b   = Nxp + NG
+            idx_src = 2*NG + 2*Nxp - i
+            x[i, j, k] = 2*x[idx_b, j, k] - x[idx_src, j, k]
+            y[i, j, k] = 2*y[idx_b, j, k] - y[idx_src, j, k]
+            z[i, j, k] = 2*z[idx_b, j, k] - z[idx_src, j, k]
+        end
+    end
+
+    # ==========================================
+    # 2. Y Direction Faces (Front & Back)
+    # ==========================================
+
+    # Front Boundary (Physical Y-)
+    if ranky == 0
+        @inbounds for k in K_in, i in I_in, j in J_gL
+            idx_b   = NG + 1
+            idx_src = 2*NG + 2 - j
+            x[i, j, k] = 2*x[i, idx_b, k] - x[i, idx_src, k]
+            y[i, j, k] = 2*y[i, idx_b, k] - y[i, idx_src, k]
+            z[i, j, k] = 2*z[i, idx_b, k] - z[i, idx_src, k]
+        end
+    end
+
+    # Back Boundary (Physical Y+)
+    if ranky == Nprocs[2] - 1
+        @inbounds for k in K_in, i in I_in, j in J_gR
+            idx_b   = Nyp + NG
+            idx_src = 2*NG + 2*Nyp - j
+            x[i, j, k] = 2*x[i, idx_b, k] - x[i, idx_src, k]
+            y[i, j, k] = 2*y[i, idx_b, k] - y[i, idx_src, k]
+            z[i, j, k] = 2*z[i, idx_b, k] - z[i, idx_src, k]
+        end
+    end
+
+    # ==========================================
+    # 3. XY Corners (Ghost cells in both X and Y)
+    # ==========================================
+    
+    # Corner: Left-Front (X- / Y-)
+    if rankx == 0 && ranky == 0
+        @inbounds for k in K_in, j in J_gL, i in I_gL
+            # x[i,j] = x[i, NG+1] + x[NG+1, j] - x[NG+1, NG+1]
+            x[i, j, k] = x[i, NG+1, k] + x[NG+1, j, k] - x[NG+1, NG+1, k]
+            y[i, j, k] = y[i, NG+1, k] + y[NG+1, j, k] - y[NG+1, NG+1, k]
+            z[i, j, k] = z[i, NG+1, k] + z[NG+1, j, k] - z[NG+1, NG+1, k]
+        end
+    end
+
+    # Corner: Left-Back (X- / Y+)
+    if rankx == 0 && ranky == Nprocs[2] - 1
+        @inbounds for k in K_in, j in J_gR, i in I_gL
+            # x[i,j] = x[i, Nyp+NG] + x[NG+1, j] - x[NG+1, Nyp+NG]
+            x[i, j, k] = x[i, Nyp+NG, k] + x[NG+1, j, k] - x[NG+1, Nyp+NG, k]
+            y[i, j, k] = y[i, Nyp+NG, k] + y[NG+1, j, k] - y[NG+1, Nyp+NG, k]
+            z[i, j, k] = z[i, Nyp+NG, k] + z[NG+1, j, k] - z[NG+1, Nyp+NG, k]
+        end
+    end
+
+    # Corner: Right-Front (X+ / Y-)
+    if rankx == Nprocs[1] - 1 && ranky == 0
+        @inbounds for k in K_in, j in J_gL, i in I_gR
+            # x[i,j] = x[i, NG+1] + x[Nxp+NG, j] - x[Nxp+NG, NG+1]
+            x[i, j, k] = x[i, NG+1, k] + x[Nxp+NG, j, k] - x[Nxp+NG, NG+1, k]
+            y[i, j, k] = y[i, NG+1, k] + y[Nxp+NG, j, k] - y[Nxp+NG, NG+1, k]
+            z[i, j, k] = z[i, NG+1, k] + z[Nxp+NG, j, k] - z[Nxp+NG, NG+1, k]
+        end
+    end
+
+    # Corner: Right-Back (X+ / Y+)
+    if rankx == Nprocs[1] - 1 && ranky == Nprocs[2] - 1
+        @inbounds for k in K_in, j in J_gR, i in I_gR
+            # x[i,j] = x[i, Nyp+NG] + x[Nxp+NG, j] - x[Nxp+NG, Nyp+NG]
+            x[i, j, k] = x[i, Nyp+NG, k] + x[Nxp+NG, j, k] - x[Nxp+NG, Nyp+NG, k]
+            y[i, j, k] = y[i, Nyp+NG, k] + y[Nxp+NG, j, k] - y[Nxp+NG, Nyp+NG, k]
+            z[i, j, k] = z[i, Nyp+NG, k] + z[Nxp+NG, j, k] - z[Nxp+NG, Nyp+NG, k]
+        end
+    end
+
+    # ==========================================
+    # 4. Z Direction (Top & Bottom)
+    # ==========================================
+    # 注意：Z 方向使用 1:Nx_tot 和 1:Ny_tot，这意味着它会处理包括 X/Y Ghost 在内的所有区域
+    # 因此 Z 方向的外推必须放在 X/Y 处理完之后
+    
+    local_Nx_tot = Nxp + 2*NG
+    local_Ny_tot = Nyp + 2*NG
+
+    # Bottom Boundary (Physical Z-)
+    if rankz == 0
+        @inbounds for k in K_gL, j in 1:local_Ny_tot, i in 1:local_Nx_tot
+            idx_b   = NG + 1
+            idx_src = 2*NG + 2 - k
+            x[i, j, k] = 2*x[i, j, idx_b] - x[i, j, idx_src]
+            y[i, j, k] = 2*y[i, j, idx_b] - y[i, j, idx_src]
+            z[i, j, k] = 2*z[i, j, idx_b] - z[i, j, idx_src]
+        end
+    end
+
+    # Top Boundary (Physical Z+)
+    if rankz == Nprocs[3] - 1
+        @inbounds for k in K_gR, j in 1:local_Ny_tot, i in 1:local_Nx_tot
+            idx_b   = Nzp + NG
+            idx_src = 2*NG + 2*Nzp - k
+            x[i, j, k] = 2*x[i, j, idx_b] - x[i, j, idx_src]
+            y[i, j, k] = 2*y[i, j, idx_b] - y[i, j, idx_src]
+            z[i, j, k] = 2*z[i, j, idx_b] - z[i, j, idx_src]
+        end
+    end
+
     return
 end

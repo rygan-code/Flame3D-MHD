@@ -1,42 +1,74 @@
-# Mesh for flat plate
 using HDF5
 using WriteVTK
+using LinearAlgebra
 
+# --- 配置参数 ---
 const NG::Int64 = 4
-const Nx::Int64 = 256
-const Ny::Int64 = 32
-const Nz::Int64 = 32
-const Lx::Float32 = 5.0
-const Ly::Float32 = 1.0
-const Lz::Float32 = 1.0
+const Nx::Int64 = 256  # 流向
+const Ny::Int64 = 128  # 法向 (建议湍流计算至少 64-128 层)
+const Nz::Int64 = 32   # 展向
+const Lx::Float32 = 2.0  # 板长 (流向长度通常要长一些)
+const Ly::Float32 = 0.1  # 高度 (边界层厚度通常很小)
+const Lz::Float32 = 0.1  # 展向宽度
 const Nx_tot::Int64 = Nx + 2*NG
 const Ny_tot::Int64 = Ny + 2*NG
 const Nz_tot::Int64 = Nz + 2*NG
 const vis::Bool = true
 const compress_level::Int64 = 3
 
+# --- 拉伸参数 (关键) ---
+# stretch_factor 越大，壁面网格越密。
+# 对于 Ly=0.1, factor=3.0 大约能让第一层网格高度为总高的 1/50 左右
+const stretch_factor_y::Float32 = 3.5 
+
+# --- 定义数组 ---
+# 注意：为了包含 Ghost Cell，我们直接定义全尺寸数组
 x = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
 y = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
 z = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
 
-# 生成均匀笛卡尔网格 (Uniform Cartesian Grid)
-# x: 0.0 -> 5.0
-# y: 0.0 -> 1.0
-# z: 0.0 -> 1.0
+# 度量项数组 (用于求解器)
+dξdx = zeros(Float32, Nx_tot, Ny_tot, Nz_tot); dξdy = zeros(Float32, Nx_tot, Ny_tot, Nz_tot); dξdz = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
+dηdx = zeros(Float32, Nx_tot, Ny_tot, Nz_tot); dηdy = zeros(Float32, Nx_tot, Ny_tot, Nz_tot); dηdz = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
+dζdx = zeros(Float32, Nx_tot, Ny_tot, Nz_tot); dζdy = zeros(Float32, Nx_tot, Ny_tot, Nz_tot); dζdz = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
+J    = zeros(Float32, Nx_tot, Ny_tot, Nz_tot)
 
-@inbounds for k ∈ 1:Nz
-    for j ∈ 1:Ny
-        for i ∈ 1:Nx
-            # 计算归一化坐标 (0.0 到 1.0)
-            # 注意转为 Float32 避免类型不匹配
+# --- 网格生成函数 ---
+# 使用 Sinh 函数将 eta (0~1) 映射到 y (0~Ly)，在 0 处加密
+function stretching_y(η::Float32, Ly::Float32, factor::Float32)
+    # 归一化拉伸: sinh(factor * eta) / sinh(factor)
+    return Ly * sinh(factor * η) / sinh(factor)
+end
+
+println("Generating Flat Plate Turbulent Mesh...")
+
+# 1. 生成坐标 (包含 Ghost Cells)
+# 循环范围从 1-NG 到 N+NG，直接生成全场坐标
+@inbounds for k_g ∈ 1:Nz_tot
+    for j_g ∈ 1:Ny_tot
+        for i_g ∈ 1:Nx_tot
+            # 还原逻辑索引到物理网格索引 (1..N)
+            i = i_g - NG
+            j = j_g - NG
+            k = k_g - NG
+
+            # 计算归一化计算域坐标 (Computational Space: 0.0 -> 1.0)
+            # 注意：Ghost Cell 的坐标会 < 0 或 > 1，这是正确的，代表物理延伸
             ξ::Float32 = Float32(i-1) / Float32(Nx-1)
             η::Float32 = Float32(j-1) / Float32(Ny-1)
             ζ::Float32 = Float32(k-1) / Float32(Nz-1)
 
-            # 线性映射到物理坐标
-            x[i+NG, j+NG, k+NG] = Lx * ξ
-            y[i+NG, j+NG, k+NG] = Ly * η
-            z[i+NG, j+NG, k+NG] = Lz * ζ
+            # --- 映射到物理空间 ---
+            
+            # X: 均匀流向
+            x[i_g, j_g, k_g] = Lx * ξ
+            
+            # Y: 壁面加密 (Sinh Stretching)
+            # 也就是下壁面 (j=1) 很密，上边界 (j=Ny) 很疏
+            y[i_g, j_g, k_g] = stretching_y(η, Ly, stretch_factor_y)
+            
+            # Z: 均匀展向
+            z[i_g, j_g, k_g] = Lz * ζ
         end
     end
 end

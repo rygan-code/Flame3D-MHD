@@ -1,9 +1,9 @@
-include("schemes.jl")
+# include("schemes.jl")
 
-# const SCALE_FACTOR = 1.0f10
-# const INV_SCALE_FACTOR = 1.0f-10
+const SCALE_FACTOR = 1.0f3
+const INV_SCALE_FACTOR = 1.0f-3
 
-function Eigen_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
+function Eigen_reconstruct_i(Q, U, ϕ, S, Fx, x, y, z)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -13,16 +13,21 @@ function Eigen_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
         return
     end
     # 2. 几何计算
-    @inbounds nx = (dξdx[i, j, k] + dξdx[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
-    @inbounds ny = (dξdy[i, j, k] + dξdy[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
-    @inbounds nz = (dξdz[i, j, k] + dξdz[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
+    dx1 = 0.125f0 * (x[i,j+1,k] + x[i+1,j+1,k] + x[i,j,k+1] + x[i+1,j,k+1] + x[i,j+1,k+1] + x[i+1,j+1,k+1] - x[i,j-1,k] - x[i+1,j-1,k] - x[i,j,k-1] - x[i+1,j,k-1] - x[i,j-1,k-1] - x[i+1,j-1,k-1])
+    dy1 = 0.125f0 * (y[i,j+1,k] + y[i+1,j+1,k] + y[i,j,k+1] + y[i+1,j,k+1] + y[i,j+1,k+1] + y[i+1,j+1,k+1] - y[i,j-1,k] - y[i+1,j-1,k] - y[i,j,k-1] - y[i+1,j,k-1] - y[i,j-1,k-1] - y[i+1,j-1,k-1])
+    dz1 = 0.125f0 * (z[i,j+1,k] + z[i+1,j+1,k] + z[i,j,k+1] + z[i+1,j,k+1] + z[i,j+1,k+1] + z[i+1,j+1,k+1] - z[i,j-1,k] - z[i+1,j-1,k] - z[i,j,k-1] - z[i+1,j,k-1] - z[i,j-1,k-1] - z[i+1,j-1,k-1])
+    
+    dx2 = 0.125f0 * (x[i,j-1,k] + x[i+1,j-1,k] + x[i,j,k+1] + x[i+1,j,k+1] + x[i,j-1,k+1] + x[i+1,j-1,k+1] - x[i,j+1,k] - x[i+1,j+1,k] - x[i,j,k-1] - x[i+1,j,k-1] - x[i,j+1,k-1] - x[i+1,j+1,k-1])
+    dy2 = 0.125f0 * (y[i,j-1,k] + y[i+1,j-1,k] + y[i,j,k+1] + y[i+1,j,k+1] + y[i,j-1,k+1] + y[i+1,j-1,k+1] - y[i,j+1,k] - y[i+1,j+1,k] - y[i,j,k-1] - y[i+1,j,k-1] - y[i,j+1,k-1] - y[i+1,j+1,k-1])
+    dz2 = 0.125f0 * (z[i,j-1,k] + z[i+1,j-1,k] + z[i,j,k+1] + z[i+1,j,k+1] + z[i,j-1,k+1] + z[i+1,j-1,k+1] - z[i,j+1,k] - z[i+1,j+1,k] - z[i,j,k-1] - z[i+1,j,k-1] - z[i,j+1,k-1] - z[i+1,j+1,k-1])
+    @inbounds nx = 0.5f0 * (dy1 * dz2 - dz1 * dy2)
+    @inbounds ny = 0.5f0 * (dz1 * dx2 - dx1 * dz2)
+    @inbounds nz = 0.5f0 * (dx1 * dy2 - dy1 * dx2)
     @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
-    @inbounds inv_len = 1.0f0 / Area
-    @inbounds nx *= inv_len
-    @inbounds ny *= inv_len
-    @inbounds nz *= inv_len
+    @inbounds nx /= Area
+    @inbounds ny /= Area
+    @inbounds nz /= Area
     # @inbounds Area *= INV_SCALE_FACTOR
-    # @cuprintf("nx=%e, ny=%e, nz=%e, Area=%e\n", nx, ny, nz, Area)
 
     # 3. 激波传感器
     @inbounds ϕx = max(ϕ[i-2, j, k], ϕ[i-1, j, k], ϕ[i, j, k], ϕ[i+1, j, k], ϕ[i+2, j, k], ϕ[i+3, j, k])
@@ -232,7 +237,7 @@ function Eigen_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
     return 
 end
 
-function Eigen_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
+function Eigen_reconstruct_j(Q, U, ϕ, S, Fy, x, y, z)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -242,15 +247,21 @@ function Eigen_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
         return
     end
 
-    # 2. 几何计算 (使用 dη, j方向平均)
-    @inbounds nx = (dηdx[i, j, k] + dηdx[i, j+1, k]) * 0.5f0
-    @inbounds ny = (dηdy[i, j, k] + dηdy[i, j+1, k]) * 0.5f0
-    @inbounds nz = (dηdz[i, j, k] + dηdz[i, j+1, k]) * 0.5f0
-    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-12)
-    @inbounds inv_len = 1.0f0 / Area
-    @inbounds nx *= inv_len
-    @inbounds ny *= inv_len
-    @inbounds nz *= inv_len
+    # 2. 几何计算
+    dx1 = 0.125f0 * (x[i+1,j,k] + x[i+1,j+1,k] + x[i,j,k+1] + x[i,j+1,k+1] + x[i+1,j,k+1] + x[i+1,j+1,k+1] - x[i-1,j,k] - x[i-1,j+1,k] - x[i,j,k-1] - x[i,j+1,k-1] - x[i-1,j,k-1] - x[i-1,j+1,k-1])
+    dy1 = 0.125f0 * (y[i+1,j,k] + y[i+1,j+1,k] + y[i,j,k+1] + y[i,j+1,k+1] + y[i+1,j,k+1] + y[i+1,j+1,k+1] - y[i-1,j,k] - y[i-1,j+1,k] - y[i,j,k-1] - y[i,j+1,k-1] - y[i-1,j,k-1] - y[i-1,j+1,k-1])
+    dz1 = 0.125f0 * (z[i+1,j,k] + z[i+1,j+1,k] + z[i,j,k+1] + z[i,j+1,k+1] + z[i+1,j,k+1] + z[i+1,j+1,k+1] - z[i-1,j,k] - z[i-1,j+1,k] - z[i,j,k-1] - z[i,j+1,k-1] - z[i-1,j,k-1] - z[i-1,j+1,k-1])
+    
+    dx2 = 0.125f0 * (x[i-1,j,k] + x[i-1,j+1,k] + x[i,j,k+1] + x[i,j+1,k+1] + x[i-1,j,k+1] + x[i-1,j+1,k+1] - x[i+1,j,k] - x[i+1,j+1,k] - x[i,j,k-1] - x[i,j+1,k-1] - x[i+1,j,k-1] - x[i+1,j+1,k-1])
+    dy2 = 0.125f0 * (y[i-1,j,k] + y[i-1,j+1,k] + y[i,j,k+1] + y[i,j+1,k+1] + y[i-1,j,k+1] + y[i-1,j+1,k+1] - y[i+1,j,k] - y[i+1,j+1,k] - y[i,j,k-1] - y[i,j+1,k-1] - y[i+1,j,k-1] - y[i+1,j+1,k-1])
+    dz2 = 0.125f0 * (z[i-1,j,k] + z[i-1,j+1,k] + z[i,j,k+1] + z[i,j+1,k+1] + z[i-1,j,k+1] + z[i-1,j+1,k+1] - z[i+1,j,k] - z[i+1,j+1,k] - z[i,j,k-1] - z[i,j+1,k-1] - z[i+1,j,k-1] - z[i+1,j+1,k-1])
+    @inbounds nx = 0.5f0 * (-dy1 * dz2 + dz1 * dy2)
+    @inbounds ny = 0.5f0 * (-dz1 * dx2 + dx1 * dz2)
+    @inbounds nz = 0.5f0 * (-dx1 * dy2 + dy1 * dx2)
+    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
+    @inbounds nx /= Area
+    @inbounds ny /= Area
+    @inbounds nz /= Area
 
     # 3. 激波传感器 (J 方向)
     @inbounds ϕx = max(ϕ[i, j-2, k], ϕ[i, j-1, k], ϕ[i, j, k], ϕ[i, j+1, k], ϕ[i, j+2, k], ϕ[i, j+3, k])
@@ -441,7 +452,7 @@ function Eigen_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
     return
 end
 
-function Eigen_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
+function Eigen_reconstruct_k(Q, U, ϕ, S, Fz, x, y, z)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -451,15 +462,22 @@ function Eigen_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
         return
     end
 
-    # 2. 几何计算 (使用 dζ, k方向平均)
-    @inbounds nx = (dζdx[i, j, k] + dζdx[i, j, k+1]) * 0.5f0
-    @inbounds ny = (dζdy[i, j, k] + dζdy[i, j, k+1]) * 0.5f0
-    @inbounds nz = (dζdz[i, j, k] + dζdz[i, j, k+1]) * 0.5f0
-    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-12)
-    @inbounds inv_len = 1.0f0 / Area
-    @inbounds nx *= inv_len
-    @inbounds ny *= inv_len
-    @inbounds nz *= inv_len
+    # 2. 几何计算
+    dx1 = 0.125f0 * (x[i+1,j,k] + x[i+1,j,k+1] + x[i,j+1,k] + x[i,j+1,k+1] + x[i+1,j+1,k] + x[i+1,j+1,k+1] - x[i-1,j,k] - x[i-1,j,k+1] - x[i,j-1,k] - x[i,j-1,k+1] - x[i-1,j-1,k] - x[i-1,j-1,k+1])
+    dy1 = 0.125f0 * (y[i+1,j,k] + y[i+1,j,k+1] + y[i,j+1,k] + y[i,j+1,k+1] + y[i+1,j+1,k] + y[i+1,j+1,k+1] - y[i-1,j,k] - y[i-1,j,k+1] - y[i,j-1,k] - y[i,j-1,k+1] - y[i-1,j-1,k] - y[i-1,j-1,k+1])
+    dz1 = 0.125f0 * (z[i+1,j,k] + z[i+1,j,k+1] + z[i,j+1,k] + z[i,j+1,k+1] + z[i+1,j+1,k] + z[i+1,j+1,k+1] - z[i-1,j,k] - z[i-1,j,k+1] - z[i,j-1,k] - z[i,j-1,k+1] - z[i-1,j-1,k] - z[i-1,j-1,k+1])
+    
+    dx2 = 0.125f0 * (x[i-1,j,k] + x[i-1,j,k+1] + x[i,j+1,k] + x[i,j+1,k+1] + x[i-1,j+1,k] + x[i-1,j+1,k+1] - x[i+1,j,k] - x[i+1,j,k+1] - x[i,j-1,k] - x[i,j-1,k+1] - x[i+1,j-1,k] - x[i+1,j-1,k+1])
+    dy2 = 0.125f0 * (y[i-1,j,k] + y[i-1,j,k+1] + y[i,j+1,k] + y[i,j+1,k+1] + y[i-1,j+1,k] + y[i-1,j+1,k+1] - y[i+1,j,k] - y[i+1,j,k+1] - y[i,j-1,k] - y[i,j-1,k+1] - y[i+1,j-1,k] - y[i+1,j-1,k+1])
+    dz2 = 0.125f0 * (z[i-1,j,k] + z[i-1,j,k+1] + z[i,j+1,k] + z[i,j+1,k+1] + z[i-1,j+1,k] + z[i-1,j+1,k+1] - z[i+1,j,k] - z[i+1,j,k+1] - z[i,j-1,k] - z[i,j-1,k+1] - z[i+1,j-1,k] - z[i+1,j-1,k+1])
+    @inbounds nx = 0.5f0 * (dy1 * dz2 - dz1 * dy2)
+    @inbounds ny = 0.5f0 * (dz1 * dx2 - dx1 * dz2)
+    @inbounds nz = 0.5f0 * (dx1 * dy2 - dy1 * dx2)
+    @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
+    @inbounds nx /= Area
+    @inbounds ny /= Area
+    @inbounds nz /= Area
+    # @cuprintf("nx=%e, ny=%e, nz=%e, Area=%e\n", nx, ny, nz, Area)
 
     # 3. 激波传感器 (K 方向)
     @inbounds ϕx = max(ϕ[i, j, k-2], ϕ[i, j, k-1], ϕ[i, j, k], ϕ[i, j, k+1], ϕ[i, j, k+2], ϕ[i, j, k+3])
@@ -651,7 +669,7 @@ function Eigen_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
     return
 end
 
-function Conser_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
+function Conser_reconstruct_i(Q, U, ϕ, S, Fx, x, y, z)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -661,14 +679,20 @@ function Conser_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
         return
     end
     # 2. 几何计算
-    @inbounds nx = (dξdx[i, j, k] + dξdx[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
-    @inbounds ny = (dξdy[i, j, k] + dξdy[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
-    @inbounds nz = (dξdz[i, j, k] + dξdz[i+1, j, k]) * 0.5f0# * SCALE_FACTOR
+    dx1 = 0.125f0 * (x[i,j+1,k] + x[i+1,j+1,k] + x[i,j,k+1] + x[i+1,j,k+1] + x[i,j+1,k+1] + x[i+1,j+1,k+1] - x[i,j-1,k] - x[i+1,j-1,k] - x[i,j,k-1] - x[i+1,j,k-1] - x[i,j-1,k-1] - x[i+1,j-1,k-1])
+    dy1 = 0.125f0 * (y[i,j+1,k] + y[i+1,j+1,k] + y[i,j,k+1] + y[i+1,j,k+1] + y[i,j+1,k+1] + y[i+1,j+1,k+1] - y[i,j-1,k] - y[i+1,j-1,k] - y[i,j,k-1] - y[i+1,j,k-1] - y[i,j-1,k-1] - y[i+1,j-1,k-1])
+    dz1 = 0.125f0 * (z[i,j+1,k] + z[i+1,j+1,k] + z[i,j,k+1] + z[i+1,j,k+1] + z[i,j+1,k+1] + z[i+1,j+1,k+1] - z[i,j-1,k] - z[i+1,j-1,k] - z[i,j,k-1] - z[i+1,j,k-1] - z[i,j-1,k-1] - z[i+1,j-1,k-1])
+    
+    dx2 = 0.125f0 * (x[i,j-1,k] + x[i+1,j-1,k] + x[i,j,k+1] + x[i+1,j,k+1] + x[i,j-1,k+1] + x[i+1,j-1,k+1] - x[i,j+1,k] - x[i+1,j+1,k] - x[i,j,k-1] - x[i+1,j,k-1] - x[i,j+1,k-1] - x[i+1,j+1,k-1])
+    dy2 = 0.125f0 * (y[i,j-1,k] + y[i+1,j-1,k] + y[i,j,k+1] + y[i+1,j,k+1] + y[i,j-1,k+1] + y[i+1,j-1,k+1] - y[i,j+1,k] - y[i+1,j+1,k] - y[i,j,k-1] - y[i+1,j,k-1] - y[i,j+1,k-1] - y[i+1,j+1,k-1])
+    dz2 = 0.125f0 * (z[i,j-1,k] + z[i+1,j-1,k] + z[i,j,k+1] + z[i+1,j,k+1] + z[i,j-1,k+1] + z[i+1,j-1,k+1] - z[i,j+1,k] - z[i+1,j+1,k] - z[i,j,k-1] - z[i+1,j,k-1] - z[i,j+1,k-1] - z[i+1,j+1,k-1])
+    @inbounds nx = 0.5f0 * (dy1 * dz2 - dz1 * dy2)
+    @inbounds ny = 0.5f0 * (dz1 * dx2 - dx1 * dz2)
+    @inbounds nz = 0.5f0 * (dx1 * dy2 - dy1 * dx2)
     @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
-    @inbounds inv_len = 1.0f0 / Area
-    @inbounds nx *= inv_len
-    @inbounds ny *= inv_len
-    @inbounds nz *= inv_len
+    @inbounds nx /= Area
+    @inbounds ny /= Area
+    @inbounds nz /= Area
     # @inbounds Area *= INV_SCALE_FACTOR
     # @cuprintf("nx=%e, ny=%e, nz=%e, Area=%e\n", nx, ny, nz, Area)
 
@@ -840,7 +864,7 @@ function Conser_reconstruct_i(Q, U, ϕ, S, Fx, dξdx, dξdy, dξdz)
     return 
 end
 
-function Conser_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
+function Conser_reconstruct_j(Q, U, ϕ, S, Fy, x, y, z)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -851,14 +875,20 @@ function Conser_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
     end
 
     # 2. 几何计算 (使用 eta 度量项，j 和 j+1 界面)
-    @inbounds nx = (dηdx[i, j, k] + dηdx[i, j+1, k]) * 0.5f0
-    @inbounds ny = (dηdy[i, j, k] + dηdy[i, j+1, k]) * 0.5f0
-    @inbounds nz = (dηdz[i, j, k] + dηdz[i, j+1, k]) * 0.5f0
+    dx1 = 0.125f0 * (x[i+1,j,k] + x[i+1,j+1,k] + x[i,j,k+1] + x[i,j+1,k+1] + x[i+1,j,k+1] + x[i+1,j+1,k+1] - x[i-1,j,k] - x[i-1,j+1,k] - x[i,j,k-1] - x[i,j+1,k-1] - x[i-1,j,k-1] - x[i-1,j+1,k-1])
+    dy1 = 0.125f0 * (y[i+1,j,k] + y[i+1,j+1,k] + y[i,j,k+1] + y[i,j+1,k+1] + y[i+1,j,k+1] + y[i+1,j+1,k+1] - y[i-1,j,k] - y[i-1,j+1,k] - y[i,j,k-1] - y[i,j+1,k-1] - y[i-1,j,k-1] - y[i-1,j+1,k-1])
+    dz1 = 0.125f0 * (z[i+1,j,k] + z[i+1,j+1,k] + z[i,j,k+1] + z[i,j+1,k+1] + z[i+1,j,k+1] + z[i+1,j+1,k+1] - z[i-1,j,k] - z[i-1,j+1,k] - z[i,j,k-1] - z[i,j+1,k-1] - z[i-1,j,k-1] - z[i-1,j+1,k-1])
+    
+    dx2 = 0.125f0 * (x[i-1,j,k] + x[i-1,j+1,k] + x[i,j,k+1] + x[i,j+1,k+1] + x[i-1,j,k+1] + x[i-1,j+1,k+1] - x[i+1,j,k] - x[i+1,j+1,k] - x[i,j,k-1] - x[i,j+1,k-1] - x[i+1,j,k-1] - x[i+1,j+1,k-1])
+    dy2 = 0.125f0 * (y[i-1,j,k] + y[i-1,j+1,k] + y[i,j,k+1] + y[i,j+1,k+1] + y[i-1,j,k+1] + y[i-1,j+1,k+1] - y[i+1,j,k] - y[i+1,j+1,k] - y[i,j,k-1] - y[i,j+1,k-1] - y[i+1,j,k-1] - y[i+1,j+1,k-1])
+    dz2 = 0.125f0 * (z[i-1,j,k] + z[i-1,j+1,k] + z[i,j,k+1] + z[i,j+1,k+1] + z[i-1,j,k+1] + z[i-1,j+1,k+1] - z[i+1,j,k] - z[i+1,j+1,k] - z[i,j,k-1] - z[i,j+1,k-1] - z[i+1,j,k-1] - z[i+1,j+1,k-1])
+    @inbounds nx = 0.5f0 * (-dy1 * dz2 + dz1 * dy2)
+    @inbounds ny = 0.5f0 * (-dz1 * dx2 + dx1 * dz2)
+    @inbounds nz = 0.5f0 * (-dx1 * dy2 + dy1 * dx2)
     @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
-    @inbounds inv_len = 1.0f0 / Area
-    @inbounds nx *= inv_len
-    @inbounds ny *= inv_len
-    @inbounds nz *= inv_len
+    @inbounds nx /= Area
+    @inbounds ny /= Area
+    @inbounds nz /= Area
 
     # 3. 激波传感器 (沿 j 方向)
     @inbounds ϕy = max(ϕ[i, j-2, k], ϕ[i, j-1, k], ϕ[i, j, k], ϕ[i, j+1, k], ϕ[i, j+2, k], ϕ[i, j+3, k])
@@ -1013,7 +1043,7 @@ function Conser_reconstruct_j(Q, U, ϕ, S, Fy, dηdx, dηdy, dηdz)
     return 
 end
 
-function Conser_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
+function Conser_reconstruct_k(Q, U, ϕ, S, Fz, x, y, z)
     i = (blockIdx().x-1i32)* blockDim().x + threadIdx().x
     j = (blockIdx().y-1i32)* blockDim().y + threadIdx().y
     k = (blockIdx().z-1i32)* blockDim().z + threadIdx().z
@@ -1023,15 +1053,21 @@ function Conser_reconstruct_k(Q, U, ϕ, S, Fz, dζdx, dζdy, dζdz)
         return
     end
 
-    # 2. 几何计算 (使用 zeta 度量项，k 和 k+1 界面)
-    @inbounds nx = (dζdx[i, j, k] + dζdx[i, j, k+1]) * 0.5f0
-    @inbounds ny = (dζdy[i, j, k] + dζdy[i, j, k+1]) * 0.5f0
-    @inbounds nz = (dζdz[i, j, k] + dζdz[i, j, k+1]) * 0.5f0
+    # 2. 几何计算 
+    dx1 = 0.125f0 * (x[i+1,j,k] + x[i+1,j,k+1] + x[i,j+1,k] + x[i,j+1,k+1] + x[i+1,j+1,k] + x[i+1,j+1,k+1] - x[i-1,j,k] - x[i-1,j,k+1] - x[i,j-1,k] - x[i,j-1,k+1] - x[i-1,j-1,k] - x[i-1,j-1,k+1])
+    dy1 = 0.125f0 * (y[i+1,j,k] + y[i+1,j,k+1] + y[i,j+1,k] + y[i,j+1,k+1] + y[i+1,j+1,k] + y[i+1,j+1,k+1] - y[i-1,j,k] - y[i-1,j,k+1] - y[i,j-1,k] - y[i,j-1,k+1] - y[i-1,j-1,k] - y[i-1,j-1,k+1])
+    dz1 = 0.125f0 * (z[i+1,j,k] + z[i+1,j,k+1] + z[i,j+1,k] + z[i,j+1,k+1] + z[i+1,j+1,k] + z[i+1,j+1,k+1] - z[i-1,j,k] - z[i-1,j,k+1] - z[i,j-1,k] - z[i,j-1,k+1] - z[i-1,j-1,k] - z[i-1,j-1,k+1])
+    
+    dx2 = 0.125f0 * (x[i-1,j,k] + x[i-1,j,k+1] + x[i,j+1,k] + x[i,j+1,k+1] + x[i-1,j+1,k] + x[i-1,j+1,k+1] - x[i+1,j,k] - x[i+1,j,k+1] - x[i,j-1,k] - x[i,j-1,k+1] - x[i+1,j-1,k] - x[i+1,j-1,k+1])
+    dy2 = 0.125f0 * (y[i-1,j,k] + y[i-1,j,k+1] + y[i,j+1,k] + y[i,j+1,k+1] + y[i-1,j+1,k] + y[i-1,j+1,k+1] - y[i+1,j,k] - y[i+1,j,k+1] - y[i,j-1,k] - y[i,j-1,k+1] - y[i+1,j-1,k] - y[i+1,j-1,k+1])
+    dz2 = 0.125f0 * (z[i-1,j,k] + z[i-1,j,k+1] + z[i,j+1,k] + z[i,j+1,k+1] + z[i-1,j+1,k] + z[i-1,j+1,k+1] - z[i+1,j,k] - z[i+1,j,k+1] - z[i,j-1,k] - z[i,j-1,k+1] - z[i+1,j-1,k] - z[i+1,j-1,k+1])
+    @inbounds nx = 0.5f0 * (dy1 * dz2 - dz1 * dy2)
+    @inbounds ny = 0.5f0 * (dz1 * dx2 - dx1 * dz2)
+    @inbounds nz = 0.5f0 * (dx1 * dy2 - dy1 * dx2)
     @inbounds Area = sqrt(nx*nx + ny*ny + nz*nz + 1.0f-20)
-    @inbounds inv_len = 1.0f0 / Area
-    @inbounds nx *= inv_len
-    @inbounds ny *= inv_len
-    @inbounds nz *= inv_len
+    @inbounds nx /= Area
+    @inbounds ny /= Area
+    @inbounds nz /= Area
 
     # 3. 激波传感器 (沿 k 方向)
     @inbounds ϕz = max(ϕ[i, j, k-2], ϕ[i, j, k-1], ϕ[i, j, k], ϕ[i, j, k+1], ϕ[i, j, k+2], ϕ[i, j, k+3])
